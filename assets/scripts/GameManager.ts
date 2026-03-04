@@ -8,9 +8,13 @@
  * 3. 运行游戏 - 所有内容将由代码自动生成
  */
 
-import { _decorator, Component, Node, Sprite, Label, Graphics, Camera, UITransform, SpriteFrame, Color, Vec3, Vec2, director, Scene, resources, Prefab, instantiate, input, Input, EventTouch, systemEvent, SystemEvent, TiledLayer, TiledMap, TiledMapAsset, PhysicsSystem, BoxCollider2D } from 'cc';
+import { _decorator, Component, Node, Label, Graphics, UITransform, Color, Vec3, Vec2, director } from 'cc';
 import { WEAPON_CONFIG, ENEMY_CONFIG, DOG_CONFIG, PLAYER_CONFIG, LEVEL_CONFIG } from './Constants';
-import { GameState, PlayerStats, EnemyInstance, DogInstance, WeaponInstance, CollisionTag } from './types/GameTypes';
+import { GameState, PlayerStats } from './types/GameTypes';
+import { PlayerController } from './PlayerController';
+import { EnemyController } from './EnemyController';
+import { DogController } from './DogController';
+import { BulletController } from './BulletController';
 
 const { ccclass, property } = _decorator;
 
@@ -36,7 +40,6 @@ export class GameManager extends Component {
     private _dogPartner: Node | null = null;
     private _enemies: Node[] = [];
     private _bullets: Node[] = [];
-    private _camera: Node | null = null;
     private _hud: Node | null = null;
 
     // ==================== 游戏数据 ====================
@@ -52,6 +55,13 @@ export class GameManager extends Component {
     // ==================== 生命周期 ====================
     onLoad() {
         GameManager._instance = this;
+
+        // 确保挂载脚本的节点有正确的UITransform
+        if (!this.node.getComponent(UITransform)) {
+            const transform = this.node.addComponent(UITransform);
+            transform.setContentSize(960, 540);
+        }
+
         console.log('🐕 狗王枪神 - 游戏初始化');
     }
 
@@ -71,36 +81,22 @@ export class GameManager extends Component {
 
     // ==================== 物理系统 ====================
     private initPhysics() {
-        // 启用物理系统
-        if (PhysicsSystem.instance) {
-            PhysicsSystem.instance.enable = true;
-            PhysicsSystem.instance.gravity = new Vec3(0, 0, 0);
-        }
+        // 暂时不使用物理引擎，我们用简单的距离检测进行碰撞
+        console.log('ℹ️ 使用简单的距离检测碰撞');
     }
 
-    // ==================== 场景创建（纯代码驱动核心） ====================
+    // ==================== 场景创建 ====================
     private createGameScene() {
         console.log('🎮 创建游戏场景...');
 
-        // 1. 创建背景
+        // 创建Canvas节点用于UI和触摸
+        this.createCanvas();
         this.createBackground();
-
-        // 2. 创建相机
-        this.createCamera();
-
-        // 3. 创建地板/碰撞区域
-        this.createGround();
-
-        // 4. 创建玩家
         this.createPlayer();
-
-        // 5. 创建狗伙伴
         this.createDogPartner();
-
-        // 6. 创建UI层
         this.createHUD();
 
-        // 7. 创建敌人生成器
+        // 敌人生成延迟执行
         this.scheduleOnce(() => {
             this.spawnEnemies(10);
         }, 1);
@@ -108,80 +104,67 @@ export class GameManager extends Component {
         console.log('✅ 游戏场景创建完成');
     }
 
+    private createCanvas() {
+        // 直接使用GameManager挂载的节点作为根节点
+        // 确保它有UITransform
+        if (!this.node.getComponent(UITransform)) {
+            const transform = this.node.addComponent(UITransform);
+            transform.setContentSize(960, 540);
+        }
+
+        // 存储引用用于触摸事件
+        this._hud = this.node;
+    }
+
     private createBackground() {
+        // 创建背景节点
         const bg = new Node('Background');
         bg.setParent(this.node);
+        bg.setPosition(new Vec3(0, 0, -100)); // 放在最底层
 
-        // 添加图形组件绘制背景
+        const transform = bg.addComponent(UITransform);
+        transform.setContentSize(960, 540);
+
+        // 绘制背景
         const graphics = bg.addComponent(Graphics);
         graphics.fillColor = new Color(30, 30, 40, 255);
-        graphics.fillRect(-1000, -1000, 2000, 2000);
+        graphics.fillRect(-480, -270, 960, 540);
 
-        // 添加变换组件
-        const transform = bg.addComponent(UITransform);
-        transform.setContentSize(2000, 2000);
+        // 绘制网格线模拟街道
+        graphics.strokeColor = new Color(60, 60, 70, 255);
+        graphics.lineWidth = 2;
 
-        // 设置层级在最底层
-        bg.setSiblingIndex(0);
+        for (let y = -270; y <= 270; y += 60) {
+            graphics.moveTo(-480, y);
+            graphics.lineTo(480, y);
+        }
+        for (let x = -480; x <= 480; x += 60) {
+            graphics.moveTo(x, -270);
+            graphics.lineTo(x, 270);
+        }
+        graphics.stroke();
+
+        // 绘制玩家区域标记（用小矩形代替圆形）
+        graphics.fillColor = new Color(0, 150, 255, 100);
+        graphics.fillRect(-25, -25, 50, 50);
+
+        console.log('✅ 背景创建完成');
     }
 
-    private createCamera() {
-        this._camera = new Node('MainCamera');
-        this._camera.setParent(this.node);
-
-        const camera = this._camera.addComponent(Camera);
-        camera.projection = Camera.ProjectionType.ORTHO;
-        camera.orthoHeight = 540;
-        camera.orthoWidth = 960;
-        camera.far = 1000;
-        camera.priority = -1;
-
-        // 设置相机位置
-        this._camera.setPosition(new Vec3(0, 0, 500));
-
-        // 让相机跟随玩家
-        this.schedule(this.updateCameraFollow, 0);
-    }
-
-    private createGround() {
-        // 创建地面碰撞区域
-        const ground = new Node('Ground');
-        ground.setParent(this.node);
-
-        const transform = ground.addComponent(UITransform);
-        transform.setContentSize(2000, 1500);
-
-        const collider = ground.addComponent(BoxCollider2D);
-        collider.size = new Vec2(2000, 1500);
-        collider.offset = new Vec2(0, 0);
-        collider.group = 0; // 默认层
-
-        ground.setPosition(new Vec3(0, 0, 0));
-    }
-
-    // ==================== 玩家创建 ====================
     private createPlayer() {
         console.log('👤 创建玩家...');
 
         this._player = new Node('Player');
         this._player.setParent(this.node);
 
-        // 玩家变换
         const transform = this._player.addComponent(UITransform);
         transform.setContentSize(50, 50);
         this._player.setPosition(new Vec3(0, 0, 0));
 
-        // 玩家图形（红色方块代表）
         const graphics = this._player.addComponent(Graphics);
-        graphics.fillColor = new Color(0, 191, 255, 255); // 深天蓝
+        graphics.fillColor = new Color(0, 191, 255, 255);
         graphics.fillRect(-25, -25, 50, 50);
 
-        // 碰撞体
-        const collider = this._player.addComponent(BoxCollider2D);
-        collider.size = new Vec2(50, 50);
-        collider.group = 1 << 0; // 玩家层
-
-        // 初始化玩家属性
         this._playerStats = {
             maxHp: PLAYER_CONFIG.maxHp,
             currentHp: PLAYER_CONFIG.maxHp,
@@ -193,13 +176,11 @@ export class GameManager extends Component {
             pickupRange: PLAYER_CONFIG.pickupRange
         };
 
-        // 添加玩家控制器脚本
         this._player.addComponent(PlayerController);
 
         console.log('✅ 玩家创建完成');
     }
 
-    // ==================== 狗伙伴创建 ====================
     private createDogPartner() {
         console.log('🐕 创建狗伙伴...');
 
@@ -209,53 +190,42 @@ export class GameManager extends Component {
         const transform = this._dogPartner.addComponent(UITransform);
         transform.setContentSize(40, 40);
 
-        // 狗伙伴图形（黄色方块代表）
         const graphics = this._dogPartner.addComponent(Graphics);
-        graphics.fillColor = new Color(255, 200, 0, 255); // 金色
+        graphics.fillColor = new Color(255, 200, 0, 255);
         graphics.fillRect(-20, -20, 40, 40);
 
-        // 设置位置 - 在玩家旁边
         this._dogPartner.setPosition(new Vec3(60, 30, 0));
-
-        // 添加狗伙伴控制器
         this._dogPartner.addComponent(DogController);
 
         console.log('✅ 狗伙伴创建完成 - 哈士奇');
     }
 
-    // ==================== HUD创建 ====================
     private createHUD() {
         console.log('📊 创建HUD...');
 
-        this._hud = new Node('HUD');
-        this._hud.setParent(this.node);
+        // HUD已经通过createCanvas创建，这里添加UI元素
+        // 确保使用_hud（Canvas节点）
+        if (!this._hud) return;
 
-        // 确保HUD在相机下（UI层级）
-        const transform = this._hud.addComponent(UITransform);
-        transform.setContentSize(960, 540);
-        this._hud.setPosition(new Vec3(0, 0, 100));
-        this._hud.setSiblingIndex(100);
-
-        // 1. 血条背景
+        // 创建血条背景
         const hpBg = this.createHUDChild('HP_BG', -400, 220, 200, 20, new Color(50, 50, 50, 200));
-
-        // 2. 血条
+        // 创建血条
         const hpBar = this.createHUDChild('HP_BAR', -400, 220, 196, 16, new Color(255, 50, 50, 255));
         hpBar.name = 'HPBar';
 
-        // 3. 金币显示
+        // 金币显示
         const goldLabel = this.createHUDLabel('GoldLabel', 380, 220, '💰 0');
         goldLabel.name = 'GoldLabel';
 
-        // 4. 分数显示
+        // 分数显示
         const scoreLabel = this.createHUDLabel('ScoreLabel', 0, 220, '分数: 0');
         scoreLabel.name = 'ScoreLabel';
 
-        // 5. 等级显示
+        // 等级显示
         const levelLabel = this.createHUDLabel('LevelLabel', -380, 180, '等级: 1');
         levelLabel.name = 'LevelLabel';
 
-        // 6. 狗伙伴信息
+        // 狗伙伴信息
         const dogLabel = this.createHUDLabel('DogLabel', 380, 180, '🐕 哈士奇 Lv.1');
         dogLabel.name = 'DogLabel';
 
@@ -302,7 +272,6 @@ export class GameManager extends Component {
         for (let i = 0; i < count; i++) {
             const randomKey = enemyKeys[Math.floor(Math.random() * enemyKeys.length)];
             const enemyConfig = ENEMY_CONFIG[randomKey as keyof typeof ENEMY_CONFIG];
-
             this.spawnEnemy(enemyConfig);
         }
     }
@@ -311,7 +280,6 @@ export class GameManager extends Component {
         const enemy = new Node(config.name);
         enemy.setParent(this.node);
 
-        // 随机位置（玩家周围）
         const angle = Math.random() * Math.PI * 2;
         const distance = 300 + Math.random() * 300;
         const x = Math.cos(angle) * distance;
@@ -319,21 +287,13 @@ export class GameManager extends Component {
 
         enemy.setPosition(new Vec3(x, y, 0));
 
-        // 变换
         const transform = enemy.addComponent(UITransform);
         transform.setContentSize(config.size, config.size);
 
-        // 图形
         const graphics = enemy.addComponent(Graphics);
         graphics.fillColor = new Color().fromHEX(config.color);
         graphics.fillRect(-config.size/2, -config.size/2, config.size, config.size);
 
-        // 碰撞体
-        const collider = enemy.addComponent(BoxCollider2D);
-        collider.size = new Vec2(config.size, config.size);
-        collider.group = 1 << 1; // 敌人层
-
-        // 添加敌人控制器
         const enemyCtrl = enemy.addComponent(EnemyController);
         enemyCtrl.init(config);
 
@@ -344,7 +304,6 @@ export class GameManager extends Component {
     public createBullet(startPos: Vec3, direction: Vec3, damage: number, isCrit: boolean): Node {
         const bullet = new Node('Bullet');
         bullet.setParent(this.node);
-
         bullet.setPosition(startPos);
 
         const transform = bullet.addComponent(UITransform);
@@ -352,19 +311,12 @@ export class GameManager extends Component {
 
         const graphics = bullet.addComponent(Graphics);
         graphics.fillColor = isCrit ? new Color(255, 255, 0, 255) : new Color(255, 255, 255, 255);
-        graphics.fillCircle(0, 0, 5);
+        graphics.fillRect(-5, -5, 10, 10);
 
-        // 碰撞体
-        const collider = bullet.addComponent(BoxCollider2D);
-        collider.size = new Vec2(10, 10);
-        collider.group = 1 << 2; // 子弹层
-
-        // 添加子弹控制器
         const bulletCtrl = bullet.addComponent(BulletController);
         bulletCtrl.init(direction, damage, isCrit);
 
         this._bullets.push(bullet);
-
         return bullet;
     }
 
@@ -378,16 +330,8 @@ export class GameManager extends Component {
     }
 
     private updateGame(deltaTime: number) {
-        // 检查游戏结束条件
         if (this._playerStats.currentHp <= 0) {
             this.gameOver();
-        }
-    }
-
-    private updateCameraFollow() {
-        if (this._camera && this._player) {
-            const playerPos = this._player.getPosition();
-            this._camera.setPosition(new Vec3(playerPos.x, playerPos.y, 500));
         }
     }
 
@@ -402,7 +346,6 @@ export class GameManager extends Component {
     }
 
     public killEnemy(enemy: Node, gold: number) {
-        // 移除敌人
         const index = this._enemies.indexOf(enemy);
         if (index > -1) {
             this._enemies.splice(index, 1);
@@ -410,14 +353,12 @@ export class GameManager extends Component {
 
         enemy.destroy();
 
-        // 奖励
         this._gold += gold;
         this._score += gold * 10;
         this._killCount++;
 
         this.updateHUD();
 
-        // 检查是否胜利
         if (this._enemies.length === 0) {
             this.victory();
         }
@@ -454,19 +395,16 @@ export class GameManager extends Component {
     private gameOver() {
         console.log('💀 游戏结束');
         this._gameState = GameState.DEFEAT;
-
         this.showGameOverUI('游戏结束', '再接再厉！');
     }
 
     private victory() {
         console.log('🎉 胜利！');
         this._gameState = GameState.VICTORY;
-
         this.showGameOverUI('胜利！', `获得金币: ${this._gold + 100}`);
     }
 
     private showGameOverUI(title: string, message: string) {
-        // 创建结束界面
         const overlay = new Node('GameOverOverlay');
         overlay.setParent(this.node);
 
@@ -474,12 +412,10 @@ export class GameManager extends Component {
         transform.setContentSize(960, 540);
         overlay.setPosition(new Vec3(0, 0, 200));
 
-        // 半透明背景
         const graphics = overlay.addComponent(Graphics);
         graphics.fillColor = new Color(0, 0, 0, 150);
         graphics.fillRect(-480, -270, 960, 540);
 
-        // 标题
         const titleNode = new Node('Title');
         titleNode.setParent(overlay);
         titleNode.setPosition(new Vec3(0, 50, 0));
@@ -487,7 +423,6 @@ export class GameManager extends Component {
         titleLabel.string = title;
         titleLabel.fontSize = 48;
 
-        // 消息
         const msgNode = new Node('Message');
         msgNode.setParent(overlay);
         msgNode.setPosition(new Vec3(0, -20, 0));
@@ -495,7 +430,6 @@ export class GameManager extends Component {
         msgLabel.string = message;
         msgLabel.fontSize = 28;
 
-        // 重新开始按钮
         const btn = new Node('RestartBtn');
         btn.setParent(overlay);
         btn.setPosition(new Vec3(0, -100, 0));
@@ -511,7 +445,6 @@ export class GameManager extends Component {
         btnLabel.string = '重新开始';
         btnLabel.fontSize = 24;
 
-        // 点击事件
         btn.on(Node.EventType.TOUCH_START, () => {
             director.loadScene(director.getScene()!.name);
         });
@@ -525,297 +458,5 @@ export class GameManager extends Component {
     public addGold(amount: number) {
         this._gold += amount;
         this.updateHUD();
-    }
-}
-
-// ==================== 玩家控制器 ====================
-@ccclass('PlayerController')
-export class PlayerController extends Component {
-    private targetPosition: Vec3 | null = null;
-    private isMoving: boolean = false;
-    private fireTimer: number = 0;
-    private isFiring: boolean = false;
-    private currentTarget: Node | null = null;
-
-    onLoad() {
-        // 注册触摸事件
-        this.node.on(Node.EventType.TOUCH_START, this.onTouchStart, this);
-        this.node.on(Node.EventType.TOUCH_MOVE, this.onTouchMove, this);
-        this.node.on(Node.EventType.TOUCH_END, this.onTouchEnd, this);
-        this.node.on(Node.EventType.TOUCH_CANCEL, this.onTouchEnd, this);
-    }
-
-    update(deltaTime: number) {
-        if (GameManager.instance.gameState !== GameState.PLAYING) return;
-
-        this.updateMovement(deltaTime);
-        this.updateAutoFire(deltaTime);
-        this.updateDogFollow();
-    }
-
-    private onTouchStart(event: EventTouch) {
-        const touchPos = event.getUILocation();
-        const worldPos = this.convertToWorldPosition(touchPos);
-
-        // 检测是否点击了敌人
-        const enemies = GameManager.instance.getEnemies();
-        let clickedEnemy: Node | null = null;
-
-        for (const enemy of enemies) {
-            const enemyPos = enemy.getPosition();
-            const dist = Vec3.distance(worldPos, enemyPos);
-            if (dist < 40) {
-                clickedEnemy = enemy;
-                break;
-            }
-        }
-
-        if (clickedEnemy) {
-            this.currentTarget = clickedEnemy;
-            this.isFiring = true;
-        } else {
-            this.targetPosition = worldPos;
-            this.isMoving = true;
-            this.isFiring = false;
-        }
-    }
-
-    private onTouchMove(event: EventTouch) {
-        const touchPos = event.getUILocation();
-        const worldPos = this.convertToWorldPosition(touchPos);
-
-        if (!this.isFiring) {
-            this.targetPosition = worldPos;
-        }
-    }
-
-    private onTouchEnd(event: EventTouch) {
-        this.isFiring = false;
-        this.currentTarget = null;
-    }
-
-    private updateMovement(deltaTime: number) {
-        if (!this.isMoving || !this.targetPosition) return;
-
-        const currentPos = this.node.getPosition();
-        const direction = new Vec3().subtract(this.targetPosition, currentPos);
-        const distance = direction.length();
-
-        if (distance < 10) {
-            this.isMoving = false;
-            this.targetPosition = null;
-            return;
-        }
-
-        direction.normalize();
-        const stats = GameManager.instance.getPlayerStats();
-        const moveDistance = stats.speed * deltaTime;
-
-        const newPos = currentPos.add(direction.clone().multiplyScalar(moveDistance));
-        this.node.setPosition(newPos);
-    }
-
-    private updateAutoFire(deltaTime: number) {
-        if (!this.isFiring || !this.currentTarget) return;
-
-        this.fireTimer += deltaTime;
-        const fireRate = 1 / 3; // 3发/秒
-
-        if (this.fireTimer >= fireRate) {
-            this.fireTimer = 0;
-            this.fire();
-        }
-    }
-
-    private fire() {
-        if (!this.currentTarget) return;
-
-        const playerPos = this.node.getPosition();
-        const targetPos = this.currentTarget.getPosition();
-        const direction = new Vec3().subtract(targetPos, playerPos).normalize();
-
-        const stats = GameManager.instance.getPlayerStats();
-        const isCrit = Math.random() < stats.critRate;
-        const damage = isCrit ? stats.attack * stats.critDamage : stats.attack;
-
-        GameManager.instance.createBullet(
-            playerPos.clone(),
-            direction,
-            damage,
-            isCrit
-        );
-    }
-
-    private updateDogFollow() {
-        const dog = GameManager.instance.getDogPartner();
-        if (!dog) return;
-
-        const playerPos = this.node.getPosition();
-        const dogPos = dog.getPosition();
-        const offset = new Vec3(60, 30, 0); // 跟随偏移
-
-        const targetPos = playerPos.clone().add(offset);
-
-        // 平滑跟随
-        const newPos = dogPos.lerp(targetPos, 0.05);
-        dog.setPosition(newPos);
-    }
-
-    private convertToWorldPosition(uiPos: Vec2): Vec3 {
-        const camera = GameManager.instance.node.getChildByName('MainCamera');
-        if (!camera) return new Vec3(uiPos.x, uiPos.y, 0);
-
-        const cameraComp = camera.getComponent(Camera);
-        if (!cameraComp) return new Vec3(uiPos.x, uiPos.y, 0);
-
-        const worldPos = new Vec3();
-        cameraComp.screenToWorld(new Vec3(uiPos.x, uiPos.y, 0), worldPos);
-
-        return worldPos;
-    }
-}
-
-// ==================== 敌人控制器 ====================
-@ccclass('EnemyController')
-export class EnemyController extends Component {
-    private config: any = null;
-    private currentHp: number = 0;
-    private targetPlayer: Node | null = null;
-    private attackCooldown: number = 0;
-
-    init(config: any) {
-        this.config = config;
-        this.currentHp = config.hp;
-    }
-
-    update(deltaTime: number) {
-        if (GameManager.instance.gameState !== GameState.PLAYING) return;
-
-        this.updateAI(deltaTime);
-    }
-
-    private updateAI(deltaTime: number) {
-        const player = GameManager.instance.getPlayer();
-        if (!player) return;
-
-        const playerPos = player.getPosition();
-        const enemyPos = this.node.getPosition();
-        const distance = Vec3.distance(playerPos, enemyPos);
-
-        // 追踪玩家
-        if (distance > 50) {
-            const direction = new Vec3().subtract(playerPos, enemyPos).normalize();
-            const moveDistance = this.config.speed * deltaTime;
-            const newPos = enemyPos.add(direction.clone().multiplyScalar(moveDistance));
-            this.node.setPosition(newPos);
-        }
-
-        // 攻击玩家
-        this.attackCooldown -= deltaTime;
-        if (distance < 80 && this.attackCooldown <= 0) {
-            this.attackPlayer();
-            this.attackCooldown = 1; // 1秒攻击一次
-        }
-    }
-
-    private attackPlayer() {
-        const player = GameManager.instance.getPlayer();
-        if (!player) return;
-
-        const stats = GameManager.instance.getPlayerStats();
-        GameManager.instance.damagePlayer(this.config.attack);
-    }
-
-    public takeDamage(damage: number) {
-        this.currentHp -= damage;
-
-        if (this.currentHp <= 0) {
-            GameManager.instance.killEnemy(this.node, this.config.dropGold);
-        }
-    }
-}
-
-// ==================== 狗伙伴控制器 ====================
-@ccclass('DogController')
-export class DogController extends Component {
-    private config: any = null;
-
-    onLoad() {
-        this.config = DOG_CONFIG.husky; // 默认哈士奇
-    }
-
-    update(deltaTime: number) {
-        if (GameManager.instance.gameState !== GameState.PLAYING) return;
-
-        // 狗伙伴会攻击附近的敌人
-        this.attackNearbyEnemy();
-    }
-
-    private attackNearbyEnemy() {
-        const enemies = GameManager.instance.getEnemies();
-        const dogPos = this.node.getPosition();
-
-        for (const enemy of enemies) {
-            const dist = Vec3.distance(dogPos, enemy.getPosition());
-            if (dist < 100) {
-                // 狗伙伴发起攻击（造成50%玩家攻击力）
-                // 这里可以扩展为实际伤害逻辑
-                break;
-            }
-        }
-    }
-}
-
-// ==================== 子弹控制器 ====================
-@ccclass('BulletController')
-export class BulletController extends Component {
-    private direction: Vec3 = new Vec3(1, 0, 0);
-    private damage: number = 0;
-    private isCrit: boolean = false;
-    private lifetime: number = 0;
-    private speed: number = 800;
-
-    init(direction: Vec3, damage: number, isCrit: boolean) {
-        this.direction = direction;
-        this.damage = damage;
-        this.isCrit = isCrit;
-    }
-
-    update(deltaTime: number) {
-        this.lifetime += deltaTime;
-
-        // 移动
-        const moveDistance = this.speed * deltaTime;
-        const newPos = this.node.getPosition().add(this.direction.clone().multiplyScalar(moveDistance));
-        this.node.setPosition(newPos);
-
-        // 检测碰撞
-        this.checkCollision();
-
-        // 超时销毁
-        if (this.lifetime > 3) {
-            this.node.destroy();
-        }
-    }
-
-    private checkCollision() {
-        const enemies = GameManager.instance.getEnemies();
-        const bulletPos = this.node.getPosition();
-
-        for (const enemy of enemies) {
-            const enemyPos = enemy.getPosition();
-            const dist = Vec3.distance(bulletPos, enemyPos);
-
-            if (dist < 30) {
-                // 命中敌人
-                const enemyCtrl = enemy.getComponent(EnemyController);
-                if (enemyCtrl) {
-                    enemyCtrl.takeDamage(this.damage);
-                }
-
-                this.node.destroy();
-                return;
-            }
-        }
     }
 }
