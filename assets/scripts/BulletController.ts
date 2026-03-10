@@ -37,10 +37,17 @@ export class BulletController extends Component {
         // 检测碰撞
         this.checkCollision();
 
-        // 超时销毁
-        if (this.lifetime > 3) {
+        // 超时销毁 或 超出屏幕销毁
+        if (this.lifetime > 3 || this.isOutOfBounds()) {
             this.node.destroy();
         }
+    }
+
+    private isOutOfBounds(): boolean {
+        const halfWidth = GameManager.instance.getHalfWidth();
+        const halfHeight = GameManager.instance.getHalfHeight();
+        const pos = this.node.getPosition();
+        return Math.abs(pos.x) > halfWidth + 50 || Math.abs(pos.y) > halfHeight + 50;
     }
 
     private checkCollision() {

@@ -8,13 +8,14 @@
  * 3. 运行游戏 - 所有内容将由代码自动生成
  */
 
-import { _decorator, Component, Node, Label, Graphics, UITransform, Color, Vec3, Vec2, director } from 'cc';
+import { _decorator, Component, Node, Label, Graphics, UITransform, Color, Vec3, Vec2, director, Canvas, Widget, Camera, UIRenderer, view, Size, ResolutionPolicy } from 'cc';
 import { WEAPON_CONFIG, ENEMY_CONFIG, DOG_CONFIG, PLAYER_CONFIG, LEVEL_CONFIG } from './Constants';
 import { GameState, PlayerStats } from './types/GameTypes';
 import { PlayerController } from './PlayerController';
 import { EnemyController } from './EnemyController';
 import { DogController } from './DogController';
 import { BulletController } from './BulletController';
+import { VirtualJoystick } from './VirtualJoystick';
 
 const { ccclass, property } = _decorator;
 
@@ -41,6 +42,7 @@ export class GameManager extends Component {
     private _enemies: Node[] = [];
     private _bullets: Node[] = [];
     private _hud: Node | null = null;
+    private _virtualJoystick: VirtualJoystick | null = null;
 
     // ==================== 游戏数据 ====================
     private _gold: number = 0;
@@ -52,22 +54,50 @@ export class GameManager extends Component {
     private _updateInterval: number = 0;
     private _deltaTime: number = 0;
 
+    // ==================== 游戏尺寸（动态适配） ====================
+    private _screenWidth: number = 0;
+    private _screenHeight: number = 0;
+
     // ==================== 生命周期 ====================
     onLoad() {
         GameManager._instance = this;
 
-        // 确保挂载脚本的节点有正确的UITransform
-        if (!this.node.getComponent(UITransform)) {
-            const transform = this.node.addComponent(UITransform);
-            transform.setContentSize(960, 540);
-        }
+        // 获取实际屏幕尺寸并适配
+        this.adaptToScreen();
 
         console.log('🐕 狗王枪神 - 游戏初始化');
     }
 
+    private adaptToScreen() {
+        // 获取屏幕可见尺寸
+        const visibleSize = view.getVisibleSize();
+        this._screenWidth = visibleSize.width;
+        this._screenHeight = visibleSize.height;
+
+        console.log(`📱 屏幕尺寸: ${this._screenWidth} x ${this._screenHeight}`);
+
+        // 设置设计分辨率，保持宽高比适配
+        view.setDesignResolutionSize(this._screenWidth, this._screenHeight, ResolutionPolicy.SHOW_ALL);
+
+        // 确保挂载脚本的节点有正确的UITransform
+        if (!this.node.getComponent(UITransform)) {
+            const transform = this.node.addComponent(UITransform);
+            transform.setContentSize(this._screenWidth, this._screenHeight);
+        } else {
+            this.node.getComponent(UITransform)!.setContentSize(this._screenWidth, this._screenHeight);
+        }
+    }
+
+    // ==================== 屏幕尺寸获取 ====================
+    public getScreenWidth(): number { return this._screenWidth; }
+    public getScreenHeight(): number { return this._screenHeight; }
+    public getHalfWidth(): number { return this._screenWidth / 2; }
+    public getHalfHeight(): number { return this._screenHeight / 2; }
+
     start() {
         this.initPhysics();
         this.createGameScene();
+        this.createVirtualJoystick();
         this.startGame();
     }
 
@@ -105,11 +135,18 @@ export class GameManager extends Component {
     }
 
     private createCanvas() {
+        // 确保有屏幕尺寸
+        if (this._screenWidth === 0 || this._screenHeight === 0) {
+            this.adaptToScreen();
+        }
+
         // 直接使用GameManager挂载的节点作为根节点
         // 确保它有UITransform
         if (!this.node.getComponent(UITransform)) {
             const transform = this.node.addComponent(UITransform);
-            transform.setContentSize(960, 540);
+            transform.setContentSize(this._screenWidth, this._screenHeight);
+        } else {
+            this.node.getComponent(UITransform)!.setContentSize(this._screenWidth, this._screenHeight);
         }
 
         // 存储引用用于触摸事件
@@ -123,30 +160,32 @@ export class GameManager extends Component {
         bg.setPosition(new Vec3(0, 0, -100)); // 放在最底层
 
         const transform = bg.addComponent(UITransform);
-        transform.setContentSize(960, 540);
+        transform.setContentSize(this._screenWidth, this._screenHeight);
 
         // 绘制背景
         const graphics = bg.addComponent(Graphics);
         graphics.fillColor = new Color(30, 30, 40, 255);
-        graphics.fillRect(-480, -270, 960, 540);
+        graphics.fillRect(-this._screenWidth/2, -this._screenHeight/2, this._screenWidth, this._screenHeight);
 
         // 绘制网格线模拟街道
         graphics.strokeColor = new Color(60, 60, 70, 255);
         graphics.lineWidth = 2;
 
-        for (let y = -270; y <= 270; y += 60) {
-            graphics.moveTo(-480, y);
-            graphics.lineTo(480, y);
+        const gridSize = Math.min(this._screenWidth, this._screenHeight) / 9;
+        for (let y = -this._screenHeight/2; y <= this._screenHeight/2; y += gridSize) {
+            graphics.moveTo(-this._screenWidth/2, y);
+            graphics.lineTo(this._screenWidth/2, y);
         }
-        for (let x = -480; x <= 480; x += 60) {
-            graphics.moveTo(x, -270);
-            graphics.lineTo(x, 270);
+        for (let x = -this._screenWidth/2; x <= this._screenWidth/2; x += gridSize) {
+            graphics.moveTo(x, -this._screenHeight/2);
+            graphics.lineTo(x, this._screenHeight/2);
         }
         graphics.stroke();
 
-        // 绘制玩家区域标记（用小矩形代替圆形）
+        // 绘制玩家区域标记
         graphics.fillColor = new Color(0, 150, 255, 100);
-        graphics.fillRect(-25, -25, 50, 50);
+        const playerAreaSize = Math.min(this._screenWidth, this._screenHeight) * 0.08;
+        graphics.fillRect(-playerAreaSize/2, -playerAreaSize/2, playerAreaSize, playerAreaSize);
 
         console.log('✅ 背景创建完成');
     }
@@ -207,34 +246,69 @@ export class GameManager extends Component {
         // 确保使用_hud（Canvas节点）
         if (!this._hud) return;
 
-        // 创建血条背景
-        const hpBg = this.createHUDChild('HP_BG', -400, 220, 200, 20, new Color(50, 50, 50, 200));
+        const halfW = this.getHalfWidth();
+        const halfH = this.getHalfHeight();
+
+        // 创建血条背景 - 左上角
+        const hpBg = this.createHUDChild('HP_BG', -halfW + 120, halfH - 40, 200, 20, new Color(50, 50, 50, 200));
         // 创建血条
-        const hpBar = this.createHUDChild('HP_BAR', -400, 220, 196, 16, new Color(255, 50, 50, 255));
+        const hpBar = this.createHUDChild('HP_BAR', -halfW + 120, halfH - 40, 196, 16, new Color(255, 50, 50, 255));
         hpBar.name = 'HPBar';
 
-        // 金币显示
-        const goldLabel = this.createHUDLabel('GoldLabel', 380, 220, '💰 0');
+        // 金币显示 - 右上角
+        const goldLabel = this.createHUDLabel('GoldLabel', halfW - 100, halfH - 40, '💰 0');
         goldLabel.name = 'GoldLabel';
 
-        // 分数显示
-        const scoreLabel = this.createHUDLabel('ScoreLabel', 0, 220, '分数: 0');
+        // 分数显示 - 顶部居中
+        const scoreLabel = this.createHUDLabel('ScoreLabel', 0, halfH - 40, '分数: 0');
         scoreLabel.name = 'ScoreLabel';
 
-        // 等级显示
-        const levelLabel = this.createHUDLabel('LevelLabel', -380, 180, '等级: 1');
+        // 等级显示 - 左上角血条下方
+        const levelLabel = this.createHUDLabel('LevelLabel', -halfW + 120, halfH - 80, '等级: 1');
         levelLabel.name = 'LevelLabel';
 
-        // 狗伙伴信息
-        const dogLabel = this.createHUDLabel('DogLabel', 380, 180, '🐕 哈士奇 Lv.1');
+        // 狗伙伴信息 - 右上角金币下方
+        const dogLabel = this.createHUDLabel('DogLabel', halfW - 100, halfH - 80, '🐕 哈士奇 Lv.1');
         dogLabel.name = 'DogLabel';
 
         console.log('✅ HUD创建完成');
     }
 
+    private createVirtualJoystick() {
+        console.log('🕹️ 创建虚拟摇杆...');
+
+        // 创建虚拟摇杆节点
+        const joystickNode = new Node('VirtualJoystick');
+        joystickNode.setParent(this.node);
+
+        // 确保节点是激活的
+        joystickNode.active = true;
+
+        // 设置摇杆位置在屏幕左下角
+        const halfW = this.getHalfWidth();
+        const halfH = this.getHalfHeight();
+        const joystickX = -halfW + 100;
+        const joystickY = -halfH + 100;
+        joystickNode.setPosition(new Vec3(joystickX, joystickY, 0));
+
+        // 先设置 UITransform 确保节点有大小
+        const transform = joystickNode.addComponent(UITransform);
+        transform.setContentSize(150, 150); // 足够大的触摸区域
+
+        this._virtualJoystick = joystickNode.addComponent(VirtualJoystick);
+
+        // 确保摇杆显示在最上层
+        joystickNode.setSiblingIndex(100);
+
+        console.log('✅ 虚拟摇杆创建完成');
+    }
+
+    public getVirtualJoystick(): VirtualJoystick | null {
+        return this._virtualJoystick;
+    }
+
     private createHUDChild(name: string, x: number, y: number, width: number, height: number, color: Color): Node {
         const node = new Node(name);
-        node.setParent(this._hud!);
 
         const transform = node.addComponent(UITransform);
         transform.setContentSize(width, height);
@@ -249,7 +323,6 @@ export class GameManager extends Component {
 
     private createHUDLabel(name: string, x: number, y: number, text: string): Node {
         const node = new Node(name);
-        node.setParent(this._hud!);
 
         const transform = node.addComponent(UITransform);
         transform.setContentSize(200, 30);
@@ -280,8 +353,11 @@ export class GameManager extends Component {
         const enemy = new Node(config.name);
         enemy.setParent(this.node);
 
+        // 使用屏幕尺寸动态计算生成距离
+        const minDist = Math.min(this._screenWidth, this._screenHeight) * 0.4;
+        const maxDist = Math.min(this._screenWidth, this._screenHeight) * 0.8;
         const angle = Math.random() * Math.PI * 2;
-        const distance = 300 + Math.random() * 300;
+        const distance = minDist + Math.random() * (maxDist - minDist);
         const x = Math.cos(angle) * distance;
         const y = Math.sin(angle) * distance;
 
@@ -405,16 +481,19 @@ export class GameManager extends Component {
     }
 
     private showGameOverUI(title: string, message: string) {
+        const halfW = this.getHalfWidth();
+        const halfH = this.getHalfHeight();
+
         const overlay = new Node('GameOverOverlay');
         overlay.setParent(this.node);
 
         const transform = overlay.addComponent(UITransform);
-        transform.setContentSize(960, 540);
+        transform.setContentSize(this._screenWidth, this._screenHeight);
         overlay.setPosition(new Vec3(0, 0, 200));
 
         const graphics = overlay.addComponent(Graphics);
-        graphics.fillColor = new Color(0, 0, 0, 150);
-        graphics.fillRect(-480, -270, 960, 540);
+        graphics.fillColor = new Color(0, 0, 0, 180);
+        graphics.fillRect(-halfW, -halfH, this._screenWidth, this._screenHeight);
 
         const titleNode = new Node('Title');
         titleNode.setParent(overlay);
@@ -455,6 +534,7 @@ export class GameManager extends Component {
     public getPlayerStats(): PlayerStats { return this._playerStats; }
     public getDogPartner(): Node | null { return this._dogPartner; }
     public getEnemies(): Node[] { return this._enemies; }
+    public getBullets(): Node[] { return this._bullets; }
     public addGold(amount: number) {
         this._gold += amount;
         this.updateHUD();

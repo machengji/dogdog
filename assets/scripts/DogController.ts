@@ -111,13 +111,22 @@ export class DogController extends Component {
         const dogPos = this.node.getPosition();
 
         const offset = new Vec3(50, 30, 0);
-        const targetPos = playerPos.clone().add(offset);
+        let targetPos = playerPos.clone().add(offset);
 
         const dist = Vec3.distance(dogPos, targetPos);
         if (dist > 20) {
             const direction = new Vec3().subtract(targetPos, dogPos).normalize();
             const moveSpeed = 120;
-            const newPos = dogPos.add(direction.clone().multiplyScalar(moveSpeed * 0.016));
+            let newPos = dogPos.add(direction.clone().multiplyScalar(moveSpeed * 0.016));
+
+            // 边界限制
+            const halfWidth = GameManager.instance.getHalfWidth();
+            const halfHeight = GameManager.instance.getHalfHeight();
+            const dogSize = 20;
+
+            newPos.x = Math.max(-halfWidth + dogSize, Math.min(halfWidth - dogSize, newPos.x));
+            newPos.y = Math.max(-halfHeight + dogSize, Math.min(halfHeight - dogSize, newPos.y));
+
             this.node.setPosition(newPos);
         }
     }

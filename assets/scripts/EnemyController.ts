@@ -57,7 +57,16 @@ export class EnemyController extends Component {
         if (distance > 50) {
             const direction = new Vec3().subtract(playerPos, enemyPos).normalize();
             const moveDistance = this.config.speed * this.slowFactor * deltaTime;
-            const newPos = enemyPos.add(direction.clone().multiplyScalar(moveDistance));
+            let newPos = enemyPos.add(direction.clone().multiplyScalar(moveDistance));
+
+            // 边界限制
+            const halfWidth = GameManager.instance.getHalfWidth();
+            const halfHeight = GameManager.instance.getHalfHeight();
+            const enemySize = this.config.size / 2;
+
+            newPos.x = Math.max(-halfWidth + enemySize, Math.min(halfWidth - enemySize, newPos.x));
+            newPos.y = Math.max(-halfHeight + enemySize, Math.min(halfHeight - enemySize, newPos.y));
+
             this.node.setPosition(newPos);
         }
 
