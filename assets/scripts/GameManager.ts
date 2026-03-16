@@ -8,14 +8,15 @@
  * 3. 运行游戏 - 所有内容将由代码自动生成
  */
 
-import { _decorator, Component, Node, Label, Graphics, UITransform, Color, Vec3, Vec2, director, Canvas, Widget, Camera, UIRenderer, view, Size, ResolutionPolicy } from 'cc';
-import { WEAPON_CONFIG, ENEMY_CONFIG, DOG_CONFIG, PLAYER_CONFIG, LEVEL_CONFIG } from './Constants';
-import { GameState, PlayerStats } from './types/GameTypes';
+import { _decorator, Component, Node, Label, Graphics, UITransform, Color, Vec3, Vec2, director, view, ResolutionPolicy, Camera } from 'cc';
+import { WEAPON_CONFIG, ENEMY_CONFIG, DOG_CONFIG, PLAYER_CONFIG, LEVEL_CONFIG, COMBO_CONFIG, SPAWN_CONFIG, GAME_TIME_CONFIG } from './Constants';
+import { GameState, PlayerStats, ComboData } from './types/GameTypes';
 import { PlayerController } from './PlayerController';
 import { EnemyController } from './EnemyController';
 import { DogController } from './DogController';
 import { BulletController } from './BulletController';
 import { VirtualJoystick } from './VirtualJoystick';
+import { ComboManager } from './ComboManager';
 
 const { ccclass, property } = _decorator;
 
@@ -42,13 +43,26 @@ export class GameManager extends Component {
     private _enemies: Node[] = [];
     private _bullets: Node[] = [];
     private _hud: Node | null = null;
+    private _canvasNode: Node | null = null;
+    private _uiOffset: Vec3 = new Vec3(0, 0, 0);
     private _virtualJoystick: VirtualJoystick | null = null;
+    private _comboManager: ComboManager | null = null;
 
     // ==================== 游戏数据 ====================
     private _gold: number = 0;
     private _score: number = 0;
     private _level: number = 1;
     private _killCount: number = 0;
+
+    // ==================== 计时器 ====================
+    private _gameTimer: number = 0;           // 游戏总时间（秒）
+    private _spawnTimer: number = 0;         // 敌人生成计时
+    private _spawnInterval: number = 1.0;    // 敌人生成间隔
+    private _dynamicDiffTimer: number = 0;   // 动态难度计时
+
+    // ==================== 难度调整 ====================
+    private _difficultyMultiplier: number = 1.0;  // 难度倍率
+    private _lastKillTime: number = 0;            // 最后击杀时间（无战斗检测）
 
     // ==================== 定时器 ====================
     private _updateInterval: number = 0;
@@ -119,19 +133,113 @@ export class GameManager extends Component {
     private createGameScene() {
         console.log('🎮 创建游戏场景...');
 
+        // 先查找编辑器中的 Canvas（用于UI固定）
+        this.findCanvasNode();
+
+        // 创建摄像机（跟随玩家）
+        this.createCamera();
+
         // 创建Canvas节点用于UI和触摸
         this.createCanvas();
         this.createBackground();
         this.createPlayer();
         this.createDogPartner();
         this.createHUD();
+        this.createComboManager();
 
-        // 敌人生成延迟执行
-        this.scheduleOnce(() => {
-            this.spawnEnemies(10);
-        }, 1);
+        // 敌人生成延迟执行 - 改为无限刷新
+        this._spawnTimer = 0;
+        this.updateSpawnInterval();
 
         console.log('✅ 游戏场景创建完成');
+    }
+
+    // 查找 Canvas 节点
+    private findCanvasNode() {
+        const scene = director.getScene();
+        if (!scene) return;
+
+        this._canvasNode = scene.getChildByName('Canvas');
+        if (this._canvasNode) {
+            console.log('✅ 找到 Canvas 节点');
+        } else {
+            console.log('⚠️ 未找到 Canvas 节点');
+        }
+    }
+
+    private createCamera() {
+        console.log('📷 查找编辑器中的摄像机...');
+
+        // 从场景中获取现有的摄像机节点
+        const scene = director.getScene();
+        if (!scene) {
+            console.error('❌ 无法获取场景');
+            return;
+        }
+
+        // 尝试通过名称查找摄像机
+        let cameraNode = scene.getChildByName('Camera');
+
+        // 如果找不到，尝试查找任何带有 Camera 组件的节点
+        if (!cameraNode) {
+            const findCamera = (node: Node): Node | null => {
+                if (node.getComponent(Camera)) {
+                    return node;
+                }
+                for (const child of node.children) {
+                    const found = findCamera(child);
+                    if (found) return found;
+                }
+                return null;
+            };
+            cameraNode = findCamera(scene);
+        }
+
+        if (cameraNode) {
+            this._camera = cameraNode.getComponent(Camera);
+            this._cameraNode = cameraNode;
+            console.log('✅ 找到编辑器摄像机:', cameraNode.name);
+        } else {
+            console.log('⚠️ 未找到编辑器摄像机，将创建新摄像机');
+            this.createNewCamera(scene);
+        }
+    }
+
+    private createNewCamera(scene: Node) {
+        // 创建新的摄像机节点
+        const cameraNode = new Node('GameCamera');
+        cameraNode.setParent(scene);
+        cameraNode.setPosition(0, 0, 1000);
+
+        const camera = cameraNode.addComponent(Camera);
+        camera.projection = Camera.ProjectionType.ORTHO;
+        camera.orthoHeight = 350;
+        camera.near = 1;
+        camera.far = 2000;
+
+        this._camera = camera;
+        this._cameraNode = cameraNode;
+        console.log('✅ 创建新摄像机成功');
+    }
+
+    private _camera: Camera | null = null;
+    private _cameraNode: Node | null = null;
+
+    public getCamera(): Camera | null {
+        return this._camera;
+    }
+
+    private updateCamera() {
+        // 简单方案：摄像机跟随玩家
+        // 不移动世界物体，只移动摄像机
+
+        if (!this._player || !this._cameraNode) return;
+
+        // 获取玩家位置
+        const playerPos = this._player.getPosition();
+
+        // 摄像机跟随玩家（保持相同的z轴距离）
+        this._cameraNode.setPosition(new Vec3(playerPos.x, playerPos.y, 1000));
     }
 
     private createCanvas() {
@@ -154,31 +262,35 @@ export class GameManager extends Component {
     }
 
     private createBackground() {
-        // 创建背景节点
+        // 创建背景节点 - 足够大以覆盖玩家可能移动到的范围
         const bg = new Node('Background');
         bg.setParent(this.node);
+
+        // 使用屏幕的10倍大小，足够3分钟游戏
+        const bgWidth = this._screenWidth * 10;
+        const bgHeight = this._screenHeight * 10;
         bg.setPosition(new Vec3(0, 0, -100)); // 放在最底层
 
         const transform = bg.addComponent(UITransform);
-        transform.setContentSize(this._screenWidth, this._screenHeight);
+        transform.setContentSize(bgWidth, bgHeight);
 
         // 绘制背景
         const graphics = bg.addComponent(Graphics);
         graphics.fillColor = new Color(30, 30, 40, 255);
-        graphics.fillRect(-this._screenWidth/2, -this._screenHeight/2, this._screenWidth, this._screenHeight);
+        graphics.fillRect(-bgWidth/2, -bgHeight/2, bgWidth, bgHeight);
 
         // 绘制网格线模拟街道
         graphics.strokeColor = new Color(60, 60, 70, 255);
         graphics.lineWidth = 2;
 
         const gridSize = Math.min(this._screenWidth, this._screenHeight) / 9;
-        for (let y = -this._screenHeight/2; y <= this._screenHeight/2; y += gridSize) {
-            graphics.moveTo(-this._screenWidth/2, y);
-            graphics.lineTo(this._screenWidth/2, y);
+        for (let y = -bgHeight/2; y <= bgHeight/2; y += gridSize) {
+            graphics.moveTo(-bgWidth/2, y);
+            graphics.lineTo(bgWidth/2, y);
         }
-        for (let x = -this._screenWidth/2; x <= this._screenWidth/2; x += gridSize) {
-            graphics.moveTo(x, -this._screenHeight/2);
-            graphics.lineTo(x, this._screenHeight/2);
+        for (let x = -bgWidth/2; x <= bgWidth/2; x += gridSize) {
+            graphics.moveTo(x, -bgHeight/2);
+            graphics.lineTo(x, bgHeight/2);
         }
         graphics.stroke();
 
@@ -212,7 +324,8 @@ export class GameManager extends Component {
             critRate: PLAYER_CONFIG.baseCritRate,
             critDamage: PLAYER_CONFIG.baseCritDamage,
             dodgeRate: PLAYER_CONFIG.dodgeRate,
-            pickupRange: PLAYER_CONFIG.pickupRange
+            pickupRange: PLAYER_CONFIG.pickupRange,
+            range: PLAYER_CONFIG.range
         };
 
         this._player.addComponent(PlayerController);
@@ -242,34 +355,48 @@ export class GameManager extends Component {
     private createHUD() {
         console.log('📊 创建HUD...');
 
-        // HUD已经通过createCanvas创建，这里添加UI元素
-        // 确保使用_hud（Canvas节点）
-        if (!this._hud) return;
+        // 使用 Canvas 节点作为父节点
+        const parentNode = this._canvasNode || this.node;
+        if (!parentNode) return;
+
+        this._hud = parentNode;
 
         const halfW = this.getHalfWidth();
         const halfH = this.getHalfHeight();
 
         // 创建血条背景 - 左上角
-        const hpBg = this.createHUDChild('HP_BG', -halfW + 120, halfH - 40, 200, 20, new Color(50, 50, 50, 200));
+        const hpBg = this.createHUDChild('HP_BG', -halfW + 120, halfH - 40, 200, 20, new Color(50, 50, 50, 200), parentNode);
         // 创建血条
-        const hpBar = this.createHUDChild('HP_BAR', -halfW + 120, halfH - 40, 196, 16, new Color(255, 50, 50, 255));
+        const hpBar = this.createHUDChild('HP_BAR', -halfW + 120, halfH - 40, 196, 16, new Color(255, 50, 50, 255), parentNode);
         hpBar.name = 'HPBar';
 
         // 金币显示 - 右上角
-        const goldLabel = this.createHUDLabel('GoldLabel', halfW - 100, halfH - 40, '💰 0');
+        const goldLabel = this.createHUDLabel('GoldLabel', halfW - 100, halfH - 40, '💰 0', parentNode);
         goldLabel.name = 'GoldLabel';
 
         // 分数显示 - 顶部居中
-        const scoreLabel = this.createHUDLabel('ScoreLabel', 0, halfH - 40, '分数: 0');
+        const scoreLabel = this.createHUDLabel('ScoreLabel', 0, halfH - 40, '分数: 0', parentNode);
         scoreLabel.name = 'ScoreLabel';
 
+        // 计时器显示 - 分数下方居中
+        const timerLabel = this.createHUDLabel('TimerLabel', 0, halfH - 80, '⏱️ 3:00', parentNode);
+        timerLabel.name = 'TimerLabel';
+
         // 等级显示 - 左上角血条下方
-        const levelLabel = this.createHUDLabel('LevelLabel', -halfW + 120, halfH - 80, '等级: 1');
+        const levelLabel = this.createHUDLabel('LevelLabel', -halfW + 120, halfH - 80, '等级: 1', parentNode);
         levelLabel.name = 'LevelLabel';
 
         // 狗伙伴信息 - 右上角金币下方
-        const dogLabel = this.createHUDLabel('DogLabel', halfW - 100, halfH - 80, '🐕 哈士奇 Lv.1');
+        const dogLabel = this.createHUDLabel('DogLabel', halfW - 100, halfH - 80, '🐕 哈士奇 Lv.1', parentNode);
         dogLabel.name = 'DogLabel';
+
+        // 连击显示 - 顶部偏下居中
+        const comboLabel = this.createHUDLabel('ComboLabel', 0, halfH - 120, '', parentNode);
+        comboLabel.name = 'ComboLabel';
+
+        // 狗情绪显示 - 狗信息下方
+        const dogMoodLabel = this.createHUDLabel('DogMoodLabel', halfW - 100, halfH - 120, '🐕', parentNode);
+        dogMoodLabel.name = 'DogMoodLabel';
 
         console.log('✅ HUD创建完成');
     }
@@ -277,9 +404,13 @@ export class GameManager extends Component {
     private createVirtualJoystick() {
         console.log('🕹️ 创建虚拟摇杆...');
 
+        // 直接使用 Canvas 节点作为父节点（编辑器中的 Canvas 专门用于 UI，会固定在屏幕上）
+        const parentNode = this._canvasNode || this.node;
+        console.log('🕹️ 摇杆父节点:', parentNode?.name || 'this.node');
+
         // 创建虚拟摇杆节点
         const joystickNode = new Node('VirtualJoystick');
-        joystickNode.setParent(this.node);
+        joystickNode.setParent(parentNode);
 
         // 确保节点是激活的
         joystickNode.active = true;
@@ -293,7 +424,7 @@ export class GameManager extends Component {
 
         // 先设置 UITransform 确保节点有大小
         const transform = joystickNode.addComponent(UITransform);
-        transform.setContentSize(150, 150); // 足够大的触摸区域
+        transform.setContentSize(150, 150);
 
         this._virtualJoystick = joystickNode.addComponent(VirtualJoystick);
 
@@ -307,8 +438,106 @@ export class GameManager extends Component {
         return this._virtualJoystick;
     }
 
-    private createHUDChild(name: string, x: number, y: number, width: number, height: number, color: Color): Node {
+    private createComboManager() {
+        console.log('⚡ 创建连击管理器...');
+
+        // 在根节点上添加ComboManager
+        this._comboManager = this.node.addComponent(ComboManager);
+
+        console.log('✅ 连击管理器创建完成');
+    }
+
+    public getComboManager(): ComboManager | null {
+        return this._comboManager;
+    }
+
+    // ==================== 敌人生成系统 ====================
+    private updateSpawnInterval() {
+        // 根据游戏时间和难度调整刷新间隔
+        const phases = SPAWN_CONFIG.phases;
+        let lazyDogRate = 1.0;
+        let crazyDogRate = 0;
+
+        for (let i = phases.length - 1; i >= 0; i--) {
+            if (this._gameTimer >= phases[i].time) {
+                lazyDogRate = phases[i].lazyDogRate;
+                crazyDogRate = phases[i].crazyDogRate;
+                break;
+            }
+        }
+
+        // 应用难度倍率
+        lazyDogRate *= this._difficultyMultiplier;
+        crazyDogRate *= this._difficultyMultiplier;
+
+        // 计算综合刷新间隔（懒狗和疯狗的总频率）
+        const totalRate = lazyDogRate + crazyDogRate;
+        this._spawnInterval = totalRate > 0 ? 1.0 / totalRate : 999;
+
+        console.log(`📊 刷新间隔: ${this._spawnInterval.toFixed(2)}秒 (懒狗:${lazyDogRate}/s, 疯狗:${crazyDogRate}/s)`);
+    }
+
+    // 根据当前刷新率随机选择敌人类型
+    private getRandomEnemyConfig() {
+        const phases = SPAWN_CONFIG.phases;
+        let lazyDogRate = 1.0;
+        let crazyDogRate = 0;
+
+        for (let i = phases.length - 1; i >= 0; i--) {
+            if (this._gameTimer >= phases[i].time) {
+                lazyDogRate = phases[i].lazyDogRate;
+                crazyDogRate = phases[i].crazyDogRate;
+                break;
+            }
+        }
+
+        // 根据比率随机选择敌人类型
+        const total = lazyDogRate + crazyDogRate;
+        const rand = Math.random() * total;
+
+        if (rand < lazyDogRate) {
+            return ENEMY_CONFIG.lazyDog;
+        } else {
+            return ENEMY_CONFIG.crazyDog;
+        }
+    }
+
+    // 动态难度调整
+    private updateDynamicDifficulty(deltaTime: number) {
+        if (!SPAWN_CONFIG.dynamicDifficulty.enabled) return;
+
+        this._dynamicDiffTimer += deltaTime;
+
+        if (this._dynamicDiffTimer >= SPAWN_CONFIG.dynamicDifficulty.checkInterval) {
+            this._dynamicDiffTimer = 0;
+
+            // 检查玩家表现
+            const timeSinceLastKill = this._gameTimer - this._lastKillTime;
+            const playerStats = this._playerStats;
+            const hpPercent = playerStats.currentHp / playerStats.maxHp;
+
+            // 表现好（高连击/高血量）：降低难度
+            // 表现差（低连击/低血量）：增加难度
+            const combo = this._comboManager?.getComboCount() || 0;
+
+            if (combo >= 10 && hpPercent > 0.5) {
+                // 表现好，降低难度
+                this._difficultyMultiplier = Math.max(0.5, this._difficultyMultiplier - SPAWN_CONFIG.dynamicDifficulty.adjustmentRate);
+                console.log('📉 难度降低');
+            } else if (combo < 3 && hpPercent < 0.3) {
+                // 表现差，增加难度
+                this._difficultyMultiplier = Math.min(2.0, this._difficultyMultiplier + SPAWN_CONFIG.dynamicDifficulty.adjustmentRate);
+                console.log('📈 难度增加');
+            }
+
+            // 更新刷新间隔
+            this.updateSpawnInterval();
+        }
+    }
+
+    private createHUDChild(name: string, x: number, y: number, width: number, height: number, color: Color, parentNode: Node): Node {
         const node = new Node(name);
+        node.setParent(parentNode);
 
         const transform = node.addComponent(UITransform);
         transform.setContentSize(width, height);
@@ -321,8 +550,9 @@ export class GameManager extends Component {
         return node;
     }
 
-    private createHUDLabel(name: string, x: number, y: number, text: string): Node {
+    private createHUDLabel(name: string, x: number, y: number, text: string, parentNode: Node): Node {
         const node = new Node(name);
+        node.setParent(parentNode);
 
         const transform = node.addComponent(UITransform);
         transform.setContentSize(200, 30);
@@ -353,11 +583,15 @@ export class GameManager extends Component {
         const enemy = new Node(config.name);
         enemy.setParent(this.node);
 
-        // 使用屏幕尺寸动态计算生成距离
-        const minDist = Math.min(this._screenWidth, this._screenHeight) * 0.4;
-        const maxDist = Math.min(this._screenWidth, this._screenHeight) * 0.8;
+        // 在玩家周围随机位置生成敌人
+        // 使用屏幕尺寸计算生成范围
+        const spawnRadius = Math.min(this._screenWidth, this._screenHeight) * 0.5;
+
+        // 随机角度 - 确保全方向分布
         const angle = Math.random() * Math.PI * 2;
-        const distance = minDist + Math.random() * (maxDist - minDist);
+        // 随机距离（在一定范围内）
+        const distance = spawnRadius * (0.5 + Math.random() * 0.5);
+
         const x = Math.cos(angle) * distance;
         const y = Math.sin(angle) * distance;
 
@@ -374,6 +608,9 @@ export class GameManager extends Component {
         enemyCtrl.init(config);
 
         this._enemies.push(enemy);
+
+        // 调试日志
+        console.log(`👹 生成敌人: ${config.name} 位置: (${x.toFixed(1)}, ${y.toFixed(1)}) 角度: ${(angle * 180 / Math.PI).toFixed(0)}°`);
     }
 
     // ==================== 子弹创建 ====================
@@ -406,8 +643,57 @@ export class GameManager extends Component {
     }
 
     private updateGame(deltaTime: number) {
+        // 更新摄像机跟随玩家
+        this.updateCamera();
+
+        // 更新游戏计时器
+        this._gameTimer += deltaTime;
+
+        // 更新游戏时间显示
+        this.updateGameTimerUI();
+
+        // 检查胜利条件
+        if (this._gameTimer >= GAME_TIME_CONFIG.victoryTime) {
+            this.victory();
+            return;
+        }
+
+        // 敌人无限刷新
+        this._spawnTimer += deltaTime;
+        if (this._spawnTimer >= this._spawnInterval) {
+            this._spawnTimer = 0;
+
+            // 检查是否达到最大敌人数量
+            if (this._enemies.length < SPAWN_CONFIG.maxEnemies) {
+                const config = this.getRandomEnemyConfig();
+                this.spawnEnemy(config);
+            }
+        }
+
+        // 动态难度调整
+        this.updateDynamicDifficulty(deltaTime);
+
+        // 检查玩家死亡
         if (this._playerStats.currentHp <= 0) {
             this.gameOver();
+        }
+    }
+
+    // 更新游戏计时器UI
+    private updateGameTimerUI() {
+        const timerLabel = this._hud?.getChildByName('TimerLabel')?.getComponent(Label);
+        if (timerLabel) {
+            const remaining = Math.max(0, GAME_TIME_CONFIG.victoryTime - this._gameTimer);
+            const minutes = Math.floor(remaining / 60);
+            const seconds = Math.floor(remaining % 60);
+
+            // 最后30秒变红警告
+            if (remaining <= GAME_TIME_CONFIG.warningTime) {
+                timerLabel.color = new Color(255, 50, 50, 255);
+            }
+
+            const secondsStr = seconds < 10 ? '0' + seconds : seconds.toString();
+            timerLabel.string = `⏱️ ${minutes}:${secondsStr}`;
         }
     }
 
@@ -429,14 +715,64 @@ export class GameManager extends Component {
 
         enemy.destroy();
 
-        this._gold += gold;
-        this._score += gold * 10;
+        // 记录击杀时间（用于动态难度和无战斗检测）
+        this._lastKillTime = this._gameTimer;
+
+        // 添加连击
+        const comboData = this._comboManager?.addKill();
+        const comboMultiplier = comboData?.multiplier || 1;
+
+        // 应用连击倍数到金币
+        const finalGold = Math.floor(gold * comboMultiplier);
+        this._gold += finalGold;
+        this._score += finalGold * 10;
         this._killCount++;
 
-        this.updateHUD();
+        // 更新连击UI
+        this.updateComboUI();
 
-        if (this._enemies.length === 0) {
-            this.victory();
+        // 更新狗情绪
+        this.updateDogMood();
+
+        // 不再检查敌人数量，因为我们有无限刷新
+        this.updateHUD();
+    }
+
+    // 更新连击UI显示
+    private updateComboUI() {
+        const comboLabel = this._hud?.getChildByName('ComboLabel')?.getComponent(Label);
+        if (comboLabel && this._comboManager) {
+            const combo = this._comboManager.getComboData();
+            if (combo.isActive && combo.count > 0) {
+                let color = '#FFFFFF';
+                if (combo.multiplier >= 10) {
+                    color = '#FFD700';  // 金色
+                } else if (combo.multiplier >= 5) {
+                    color = '#FFA500';  // 橙色
+                } else if (combo.multiplier >= 3) {
+                    color = '#FF6B6B';  // 红色
+                } else if (combo.multiplier >= 2) {
+                    color = '#FF69B4';  // 粉色
+                }
+
+                comboLabel.string = `${combo.count} COMBO x${combo.multiplier} 🔥`;
+                comboLabel.color = new Color().fromHEX(color);
+                comboLabel.node.active = true;
+            } else {
+                comboLabel.node.active = false;
+            }
+        }
+    }
+
+    // 更新狗情绪显示
+    private updateDogMood() {
+        const dogMoodLabel = this._hud?.getChildByName('DogMoodLabel')?.getComponent(Label);
+        const dogCtrl = this._dogPartner?.getComponent(DogController);
+
+        if (dogMoodLabel && dogCtrl) {
+            const mood = dogCtrl.getCurrentMood();
+            const expression = dogCtrl.getMoodExpression();
+            dogMoodLabel.string = expression;
         }
     }
 
@@ -456,6 +792,8 @@ export class GameManager extends Component {
     }
 
     private updateHUD() {
+        // 摇杆现在使用 Widget 固定位置，不需要手动更新
+
         const goldLabel = this._hud?.getChildByName('GoldLabel')?.getComponent(Label);
         if (goldLabel) {
             goldLabel.string = `💰 ${this._gold}`;
@@ -535,6 +873,9 @@ export class GameManager extends Component {
     public getDogPartner(): Node | null { return this._dogPartner; }
     public getEnemies(): Node[] { return this._enemies; }
     public getBullets(): Node[] { return this._bullets; }
+    public getHUD(): Node | null { return this._hud; }
+    public getGameTime(): number { return this._gameTimer; }
+    public getDifficultyMultiplier(): number { return this._difficultyMultiplier; }
     public addGold(amount: number) {
         this._gold += amount;
         this.updateHUD();

@@ -121,6 +121,8 @@ export const PLAYER_CONFIG = {
     baseCritDamage: 2.0,
     dodgeRate: 0.0,
     pickupRange: 100,
+    range: 400,           // 射程
+    fireRate: 3,          // 射速（发/秒）
     invincibleTime: 1.0    // 受伤后无敌时间(秒)
 };
 
@@ -158,4 +160,72 @@ export const CURRENCY_CONFIG = {
     goldPerKill: 10,
     goldPerLevel: 50,
     diamondDropRate: 0.05
+};
+
+// ==================== 连击 Combo 配置 ====================
+export const COMBO_CONFIG = {
+    comboTime: 5,                    // 5秒内连续击杀有效
+    thresholds: [5, 10, 20, 50],     // 连击数阈值
+    multipliers: [1, 2, 3, 5, 10],   // 对应倍数
+    critBonus: 0.1                   // 连击时额外暴击率加成
+};
+
+// ==================== 狗情绪配置 ====================
+export const DOG_MOOD_CONFIG = {
+    happy: {
+        trigger: 'combo >= 10',
+        effect: { attackSpeed: 1.5, damage: 1.0 },
+        expression: '😄',
+        duration: 3
+    },
+    angry: {
+        trigger: 'playerHp < 50%',
+        effect: { attackSpeed: 1.0, damage: 1.3 },
+        expression: '😠',
+        duration: 3
+    },
+    scared: {
+        trigger: 'playerHp < 20%',
+        effect: { attackSpeed: 0.5, damage: 0.5, followCloser: true },
+        expression: '😰',
+        duration: 3
+    },
+    bored: {
+        trigger: 'noKill > 10',
+        effect: { attackSpeed: 0.5, damage: 0.7 },
+        expression: '😴',
+        duration: 5
+    },
+    normal: {
+        trigger: 'default',
+        effect: { attackSpeed: 1.0, damage: 1.0 },
+        expression: '🐕',
+        duration: 0
+    }
+};
+
+// ==================== 敌人刷新配置 ====================
+export const SPAWN_CONFIG = {
+    // 基础刷新间隔（秒）
+    baseSpawnInterval: 1.0,
+    // 难度阶段
+    phases: [
+        { time: 0, lazyDogRate: 1.0, crazyDogRate: 0 },      // 0-60秒：每秒1只懒狗
+        { time: 60, lazyDogRate: 1.0, crazyDogRate: 0.5 },  // 60-120秒：每秒1只懒狗 + 每2秒1只疯狗
+        { time: 120, lazyDogRate: 2.0, crazyDogRate: 1.0 }  // 120-180秒：每秒2只懒狗 + 每秒1只疯狗
+    ],
+    // 最大敌人数量
+    maxEnemies: 50,
+    // 动态难度参数
+    dynamicDifficulty: {
+        enabled: true,
+        adjustmentRate: 0.1,   // 每次调整10%
+        checkInterval: 10      // 每10秒检查一次
+    }
+};
+
+// ==================== 游戏时间配置 ====================
+export const GAME_TIME_CONFIG = {
+    victoryTime: 180,  // 胜利时间：3分钟（秒）
+    warningTime: 30    // 倒计时警告时间：最后30秒
 };

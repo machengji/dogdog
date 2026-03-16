@@ -74,6 +74,7 @@ export interface PlayerStats {
     critDamage: number;
     dodgeRate: number;
     pickupRange: number;
+    range: number;
 }
 
 // ==================== 游戏状态 ====================
@@ -126,4 +127,39 @@ export interface HUDData {
     gold: number;
     level: number;
     score: number;
+    combo: number;
+    comboMultiplier: number;
+    gameTime: number;
+}
+
+// ==================== 狗情绪类型 ====================
+export enum DogMood {
+    NORMAL = 'normal',
+    HAPPY = 'happy',
+    ANGRY = 'angry',
+    SCARED = 'scared',
+    BORED = 'bored'
+}
+
+export interface DogMoodEffect {
+    attackSpeed: number;
+    damage: number;
+    followCloser?: boolean;
+}
+
+export interface DogMoodData {
+    mood: DogMood;
+    expression: string;
+    effect: DogMoodEffect;
+    duration: number;
+    endTime?: number;
+}
+
+// ==================== 连击数据 ====================
+export interface ComboData {
+    count: number;
+    multiplier: number;
+    timeLeft: number;
+    isActive: boolean;
+    lastKillTime: number;
 }

@@ -156,14 +156,7 @@ export class PlayerController extends Component {
                 // 计算新位置
                 let newPos = currentPos.add(new Vec3(inputDir.x * moveDistance, inputDir.y * moveDistance, 0));
 
-                // 边界限制
-                const halfWidth = GameManager.instance.getHalfWidth();
-                const halfHeight = GameManager.instance.getHalfHeight();
-                const playerSize = 25;
-
-                newPos.x = Math.max(-halfWidth + playerSize, Math.min(halfWidth - playerSize, newPos.x));
-                newPos.y = Math.max(-halfHeight + playerSize, Math.min(halfHeight - playerSize, newPos.y));
-
+                // 无边界限制，可以自由移动到屏幕外
                 this.node.setPosition(newPos);
                 
                 // 更新目标位置用于闪避方向
@@ -189,14 +182,7 @@ export class PlayerController extends Component {
             const moveDistance = this.dodgeSpeed * deltaTime;
             let newPos = currentPos.add(this.dodgeDirection.clone().multiplyScalar(moveDistance));
 
-            // 边界限制
-            const halfWidth = GameManager.instance.getHalfWidth();
-            const halfHeight = GameManager.instance.getHalfHeight();
-            const playerSize = 25;
-
-            newPos.x = Math.max(-halfWidth + playerSize, Math.min(halfWidth - playerSize, newPos.x));
-            newPos.y = Math.max(-halfHeight + playerSize, Math.min(halfHeight - playerSize, newPos.y));
-
+            // 无边界限制
             this.node.setPosition(newPos);
 
             // 计算从闪避开始位置到现在位置的距离
@@ -222,14 +208,42 @@ export class PlayerController extends Component {
     }
 
     private updateAutoFire(deltaTime: number) {
-        if (!this.isFiring || !this.currentTarget) return;
+        // 自动寻找并攻击最近的敌人（射程内）
+        const stats = GameManager.instance.getPlayerStats();
+        const range = stats.range || 400; // 射程
 
-        this.fireTimer += deltaTime;
-        const fireRate = 1 / 3;
+        // 寻找最近的目标
+        const enemies = GameManager.instance.getEnemies();
+        const playerPos = this.node.getPosition();
+        let nearestEnemy: Node | null = null;
+        let nearestDist = range;
 
-        if (this.fireTimer >= fireRate) {
-            this.fireTimer = 0;
-            this.fire();
+        for (const enemy of enemies) {
+            const dist = Vec3.distance(playerPos, enemy.getPosition());
+            if (dist < nearestDist) {
+                nearestDist = dist;
+                nearestEnemy = enemy;
+            }
+        }
+
+        // 更新目标
+        if (nearestEnemy) {
+            this.currentTarget = nearestEnemy;
+            this.isFiring = true;
+        } else {
+            this.isFiring = false;
+            this.currentTarget = null;
+        }
+
+        // 射击
+        if (this.isFiring && this.currentTarget) {
+            this.fireTimer += deltaTime;
+            const fireRate = 1 / 3;
+
+            if (this.fireTimer >= fireRate) {
+                this.fireTimer = 0;
+                this.fire();
+            }
         }
     }
 

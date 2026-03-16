@@ -53,19 +53,27 @@ export class EnemyController extends Component {
         const enemyPos = this.node.getPosition();
         const distance = Vec3.distance(playerPos, enemyPos);
 
-        // 追踪玩家（受减速影响）
+        // 追踪玩家（受减速影响）- 无边界限制
         if (distance > 50) {
-            const direction = new Vec3().subtract(playerPos, enemyPos).normalize();
+            // 计算从敌人指向玩家的方向
+            const direction = new Vec3(
+                playerPos.x - enemyPos.x,
+                playerPos.y - enemyPos.y,
+                0
+            );
+            direction.normalize();
+
             const moveDistance = this.config.speed * this.slowFactor * deltaTime;
-            let newPos = enemyPos.add(direction.clone().multiplyScalar(moveDistance));
+            let newPos = new Vec3(
+                enemyPos.x + direction.x * moveDistance,
+                enemyPos.y + direction.y * moveDistance,
+                0
+            );
 
-            // 边界限制
-            const halfWidth = GameManager.instance.getHalfWidth();
-            const halfHeight = GameManager.instance.getHalfHeight();
-            const enemySize = this.config.size / 2;
-
-            newPos.x = Math.max(-halfWidth + enemySize, Math.min(halfWidth - enemySize, newPos.x));
-            newPos.y = Math.max(-halfHeight + enemySize, Math.min(halfHeight - enemySize, newPos.y));
+            // 调试：每60帧输出一次位置
+            if (Math.random() < 0.02) {
+                console.log(`🐕 敌人追踪: 玩家(${playerPos.x.toFixed(0)}, ${playerPos.y.toFixed(0)}) 敌人(${enemyPos.x.toFixed(0)}, ${enemyPos.y.toFixed(0)}) 方向(${direction.x.toFixed(2)}, ${direction.y.toFixed(2)})`);
+            }
 
             this.node.setPosition(newPos);
         }
