@@ -86,6 +86,9 @@ export class PlayerController extends Component {
 
     private onTouchStart(event: EventTouch) {
         const touchPos = event.getUILocation();
+        if (this.virtualJoystick?.isTouchInControlArea(touchPos)) {
+            return;
+        }
         const now = Date.now();
 
         // Double tap to dodge.
@@ -122,6 +125,10 @@ export class PlayerController extends Component {
     }
 
     private onTouchEnd(_event: EventTouch) {
+        const touchPos = _event.getUILocation();
+        if (this.virtualJoystick?.isTouchInControlArea(touchPos)) {
+            return;
+        }
         this.isFiring = false;
         this.currentTarget = null;
     }

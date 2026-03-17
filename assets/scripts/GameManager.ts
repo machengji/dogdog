@@ -167,7 +167,12 @@ export class GameManager extends Component {
         if (!this._virtualJoystick?.node) {
             return;
         }
-        this._virtualJoystick.node.setPosition(-this._screenWidth * 0.5 + 150, -this._screenHeight * 0.5 + 150, 0);
+        const joystickNode = this._virtualJoystick.node;
+        const touchAreaWidth = Math.max(280, this._screenWidth * 0.5);
+        const touchAreaHeight = this._screenHeight;
+        const transform = joystickNode.getComponent(UITransform) ?? joystickNode.addComponent(UITransform);
+        transform.setContentSize(touchAreaWidth, touchAreaHeight);
+        joystickNode.setPosition(-this._screenWidth * 0.5 + touchAreaWidth * 0.5, 0, 0);
     }
 
     private updateResultPanelLayout() {
@@ -507,8 +512,7 @@ export class GameManager extends Component {
         const joystick = new Node('VirtualJoystick');
         joystick.layer = Layers.Enum.UI_2D;
         joystick.setParent(this._uiCanvasNode);
-        joystick.setPosition(-this._screenWidth * 0.5 + 150, -this._screenHeight * 0.5 + 150, 0);
-        joystick.addComponent(UITransform).setContentSize(300, 300);
+        joystick.addComponent(UITransform).setContentSize(Math.max(280, this._screenWidth * 0.5), this._screenHeight);
         this._virtualJoystick = joystick.addComponent(VirtualJoystick);
         this.repositionVirtualJoystick();
     }
