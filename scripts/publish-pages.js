@@ -30,6 +30,37 @@ function runQuiet(cmd, args) {
   });
 }
 
+function getLastCommitTimestamp(pathSpec) {
+  const result = runQuiet('git', ['log', '-1', '--format=%ct', '--', pathSpec]);
+  if (result.status !== 0) {
+    return 0;
+  }
+  const value = parseInt((result.stdout || '').trim(), 10);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function ensureBuildNotStale() {
+  if (process.env.SKIP_BUILD_FRESHNESS_CHECK === '1') {
+    return;
+  }
+
+  const buildWorkspaceChanges = runQuiet('git', ['status', '--porcelain', '--', 'build/web-desktop']);
+  if ((buildWorkspaceChanges.stdout || '').trim()) {
+    // Build artifacts were regenerated locally; allow publish to continue.
+    return;
+  }
+
+  const sourceTs = getLastCommitTimestamp('assets/scripts');
+  const buildTs = getLastCommitTimestamp('build/web-desktop/assets/main/index.js');
+
+  if (sourceTs > buildTs) {
+    console.error('[pages:publish] build/web-desktop is older than assets/scripts.');
+    console.error('[pages:publish] Please rebuild Web Desktop in Cocos Creator first.');
+    console.error('[pages:publish] If you must bypass, set SKIP_BUILD_FRESHNESS_CHECK=1.');
+    process.exit(1);
+  }
+}
+
 function ensureViewportFit(content) {
   if (content.includes('viewport-fit=cover')) {
     return content;
@@ -114,6 +145,7 @@ if (!fs.existsSync(webBuildIndex)) {
   process.exit(1);
 }
 
+ensureBuildNotStale();
 patchWebBuildForMobile();
 
 const filesToAdd = [
@@ -168,4 +200,3 @@ run('git', ['commit', '-m', message, '--', ...filesToAdd]);
 run('git', ['push', 'origin', branch]);
 
 console.log(`[pages:publish] Pushed to ${branch}; GitHub Actions will deploy Pages automatically.`);
-
