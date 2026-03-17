@@ -78,8 +78,8 @@ export class GameManager extends Component {
     private readonly _maxEnemies = Math.max(30, SPAWN_CONFIG?.maxEnemies ?? 40);
     private readonly _designWidth = 720;
     private readonly _designHeight = 1280;
-    private readonly _portraitWorldZoom = 1.12;
-    private readonly _landscapeWorldZoom = 1.02;
+    private readonly _portraitWorldZoom = 1.3;
+    private readonly _landscapeWorldZoom = 1.16;
     private readonly _hudTopMargin = 42;
     private _isPortrait = true;
 
@@ -167,10 +167,9 @@ export class GameManager extends Component {
         this.setUIPosition('ScoreLabel', 0, topY);
         this.setUIPosition('TimerLabel', 0, topY - (isNarrow ? 34 : 38));
 
-        if (isNarrow) {
-            this.setUIPosition('DogMoodLabel', -halfW + 42, topY - 34);
-        } else {
-            this.setUIPosition('DogMoodLabel', -halfW + 320, topY);
+        const moodNode = this._hudNode.getChildByName('DogMoodLabel');
+        if (moodNode) {
+            moodNode.active = false;
         }
     }
 
