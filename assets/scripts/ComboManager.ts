@@ -194,7 +194,8 @@ export class ComboManager extends Component {
 
         const parentTransform = parent.getComponent(UITransform);
         const halfH = parentTransform ? parentTransform.contentSize.height * 0.5 : 300;
-        this._comboContainer.setPosition(new Vec3(0, halfH - 120, 0));
+        const isNarrow = !!parentTransform && parentTransform.contentSize.width <= 680;
+        this._comboContainer.setPosition(new Vec3(0, halfH - (isNarrow ? 148 : 124), 0));
     }
 
     private updateComboUI() {
@@ -237,8 +238,9 @@ export class ComboManager extends Component {
 
         const parentTransform = parent.getComponent(UITransform);
         const halfH = parentTransform ? parentTransform.contentSize.height * 0.5 : 300;
+        const isNarrow = !!parentTransform && parentTransform.contentSize.width <= 680;
         const x = (Math.random() - 0.5) * 180;
-        const y = halfH - 170 + (Math.random() - 0.5) * 30;
+        const y = halfH - (isNarrow ? 205 : 175) + (Math.random() - 0.5) * 30;
         floatingText.setPosition(new Vec3(x, y, 0));
         floatingText.addComponent(UITransform).setContentSize(260, 40);
 
@@ -282,4 +284,3 @@ export class ComboManager extends Component {
         return node.addComponent(ComboManager);
     }
 }
-
