@@ -63,6 +63,7 @@ export class GameManager extends Component {
 
     private _cameraNode: Node | null = null;
     private _camera: Camera | null = null;
+    private _uiCamera: Camera | null = null;
     private _uiCanvasNode: Node | null = null;
     private _hudNode: Node | null = null;
     private _worldRoot: Node | null = null;
@@ -75,6 +76,8 @@ export class GameManager extends Component {
 
     private readonly _cameraZ = 600;
     private readonly _maxEnemies = Math.max(30, SPAWN_CONFIG?.maxEnemies ?? 40);
+    private readonly _designWidth = 720;
+    private readonly _designHeight = 1280;
 
     onLoad() {
         GameManager._instance = this;
@@ -83,13 +86,106 @@ export class GameManager extends Component {
 
     onDestroy() {
         this.unregisterRestartListener();
+        view.setResizeCallback(undefined as unknown as () => void);
     }
 
     private initScreen() {
-        const size = view.getVisibleSize();
-        this._screenWidth = size.width;
-        this._screenHeight = size.height;
-        view.setDesignResolutionSize(this._screenWidth, this._screenHeight, ResolutionPolicy.SHOW_ALL);
+        this.applyDesignResolution();
+        view.setResizeCallback(() => this.onViewResize());
+    }
+
+    private applyDesignResolution() {
+        const frameSize = view.getFrameSize();
+        const isPortrait = frameSize.height >= frameSize.width;
+        const designWidth = isPortrait ? this._designWidth : this._designHeight;
+        const designHeight = isPortrait ? this._designHeight : this._designWidth;
+
+        view.setDesignResolutionSize(designWidth, designHeight, ResolutionPolicy.NO_BORDER);
+
+        const visible = view.getVisibleSize();
+        this._screenWidth = visible.width;
+        this._screenHeight = visible.height;
+    }
+
+    private onViewResize() {
+        this.applyDesignResolution();
+        this.refreshUILayout();
+    }
+
+    private refreshUILayout() {
+        const halfH = this._screenHeight * 0.5;
+        if (this._camera) {
+            this._camera.orthoHeight = halfH;
+        }
+        if (this._uiCamera) {
+            this._uiCamera.orthoHeight = halfH;
+        }
+
+        const canvasTransform = this._uiCanvasNode?.getComponent(UITransform);
+        if (canvasTransform) {
+            canvasTransform.setContentSize(this._screenWidth, this._screenHeight);
+        }
+
+        const hudTransform = this._hudNode?.getComponent(UITransform);
+        if (hudTransform) {
+            hudTransform.setContentSize(this._screenWidth, this._screenHeight);
+        }
+
+        this.layoutHUD();
+        this.repositionVirtualJoystick();
+        this.updateResultPanelLayout();
+
+        const comboManager = this.getComboManager();
+        comboManager?.setUIRoot(this._hudNode);
+    }
+
+    private setUIPosition(nodeName: string, x: number, y: number) {
+        const node = this._hudNode?.getChildByName(nodeName);
+        if (!node) {
+            return;
+        }
+        node.setPosition(x, y, 0);
+    }
+
+    private layoutHUD() {
+        if (!this._hudNode) {
+            return;
+        }
+
+        const halfW = this._screenWidth * 0.5;
+        const halfH = this._screenHeight * 0.5;
+
+        this.setUIPosition('HP_BG', -halfW + 120, halfH - 40);
+        this.setUIPosition('HPBar', -halfW + 120, halfH - 40);
+        this.setUIPosition('GoldLabel', halfW - 100, halfH - 40);
+        this.setUIPosition('ScoreLabel', 0, halfH - 40);
+        this.setUIPosition('TimerLabel', 0, halfH - 78);
+        this.setUIPosition('DogMoodLabel', -halfW + 320, halfH - 40);
+    }
+
+    private repositionVirtualJoystick() {
+        if (!this._virtualJoystick?.node) {
+            return;
+        }
+        this._virtualJoystick.node.setPosition(-this._screenWidth * 0.5 + 150, -this._screenHeight * 0.5 + 150, 0);
+    }
+
+    private updateResultPanelLayout() {
+        if (!this._resultPanel?.isValid) {
+            return;
+        }
+
+        const panelTransform = this._resultPanel.getComponent(UITransform);
+        if (panelTransform) {
+            panelTransform.setContentSize(this._screenWidth, this._screenHeight);
+        }
+
+        const bg = this._resultPanel.getComponent(Graphics);
+        if (bg) {
+            bg.clear();
+            bg.fillColor = new Color(0, 0, 0, 180);
+            bg.fillRect(-this._screenWidth * 0.5, -this._screenHeight * 0.5, this._screenWidth, this._screenHeight);
+        }
     }
 
     start() {
@@ -172,6 +268,7 @@ export class GameManager extends Component {
         uiCam.priority = 10;
         uiCam.clearFlags = 2;
         uiCam.visibility = Layers.BitMask.UI_2D;
+        this._uiCamera = uiCam;
 
         const canvasNode = new Node('UICanvas');
         canvasNode.layer = Layers.Enum.UI_2D;
@@ -376,6 +473,7 @@ export class GameManager extends Component {
         this.createLabel(this._hudNode, 'ScoreLabel', 0, halfH - 40, '分数: 0');
         this.createLabel(this._hudNode, 'TimerLabel', 0, halfH - 78, '时间: 03:00');
         this.createLabel(this._hudNode, 'DogMoodLabel', -halfW + 320, halfH - 40, '狗狗');
+        this.layoutHUD();
     }
 
     private createUIRect(parent: Node, name: string, x: number, y: number, w: number, h: number, color: Color): Node {
@@ -412,6 +510,7 @@ export class GameManager extends Component {
         joystick.setPosition(-this._screenWidth * 0.5 + 150, -this._screenHeight * 0.5 + 150, 0);
         joystick.addComponent(UITransform).setContentSize(300, 300);
         this._virtualJoystick = joystick.addComponent(VirtualJoystick);
+        this.repositionVirtualJoystick();
     }
 
     update(dt: number) {
