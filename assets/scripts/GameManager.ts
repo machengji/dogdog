@@ -3,6 +3,10 @@ import {
     Component,
     Node,
     Label,
+    Sprite,
+    SpriteFrame,
+    Texture2D,
+    resources,
     Graphics,
     UITransform,
     Color,
@@ -53,6 +57,7 @@ export class GameManager extends Component {
     private _hudNode: Node | null = null;
     private _worldRoot: Node | null = null;
     private _virtualJoystick: VirtualJoystick | null = null;
+    private _pixelFrames: Record<string, SpriteFrame> = {};
 
     private readonly _cameraZ = 600;
     private readonly _maxEnemies = 40;
@@ -70,10 +75,38 @@ export class GameManager extends Component {
     }
 
     start() {
-        this.scheduleOnce(() => {
+        this.scheduleOnce(async () => {
+            await this.preloadPixelAssets();
             this.createGameScene();
             this.startGame();
         }, 0);
+    }
+
+    private async preloadPixelAssets() {
+        const assets = [
+            ['player', 'pixel/player'],
+            ['dog', 'pixel/dog'],
+            ['enemy', 'pixel/enemy'],
+            ['bullet', 'pixel/bullet'],
+            ['bullet_crit', 'pixel/bullet_crit']
+        ] as const;
+
+        await Promise.all(
+            assets.map(([key, path]) => this.loadPixelFrame(path, key))
+        );
+    }
+
+    private loadPixelFrame(path: string, key: string): Promise<void> {
+        return new Promise((resolve) => {
+            resources.load(path, Texture2D, (err, texture) => {
+                if (!err && texture) {
+                    const frame = new SpriteFrame();
+                    frame.texture = texture;
+                    this._pixelFrames[key] = frame;
+                }
+                resolve();
+            });
+        });
     }
 
     private createGameScene() {
@@ -147,6 +180,65 @@ export class GameManager extends Component {
         this.createVirtualJoystick();
     }
 
+    private createPixelNode(
+        parent: Node,
+        name: string,
+        assetKey: string,
+        pattern: string[],
+        palette: Record<string, Color>,
+        pixelSize: number
+    ): Node {
+        const node = new Node(name);
+        node.layer = Layers.Enum.DEFAULT;
+        node.setParent(parent);
+
+        const rows = pattern.length;
+        const cols = pattern[0]?.length ?? 1;
+        const width = cols * pixelSize;
+        const height = rows * pixelSize;
+        node.addComponent(UITransform).setContentSize(width, height);
+
+        const frame = this._pixelFrames[assetKey];
+        if (frame) {
+            const sprite = node.addComponent(Sprite);
+            sprite.spriteFrame = frame;
+        } else {
+            const g = node.addComponent(Graphics);
+            this.drawPixelSprite(g, pattern, palette, pixelSize);
+        }
+        return node;
+    }
+
+    private drawPixelSprite(
+        graphics: Graphics,
+        pattern: string[],
+        palette: Record<string, Color>,
+        pixelSize: number
+    ) {
+        const rows = pattern.length;
+        const cols = pattern[0]?.length ?? 0;
+        const width = cols * pixelSize;
+        const height = rows * pixelSize;
+        const startX = -width * 0.5;
+        const startY = height * 0.5 - pixelSize;
+
+        for (let row = 0; row < rows; row++) {
+            for (let col = 0; col < cols; col++) {
+                const key = pattern[row][col];
+                if (key === '.' || !palette[key]) {
+                    continue;
+                }
+                graphics.fillColor = palette[key];
+                graphics.fillRect(
+                    startX + col * pixelSize,
+                    startY - row * pixelSize,
+                    pixelSize,
+                    pixelSize
+                );
+            }
+        }
+    }
+
     private createBackground() {
         if (!this._worldRoot) {
             return;
@@ -159,18 +251,25 @@ export class GameManager extends Component {
         const size = 6000;
         bg.addComponent(UITransform).setContentSize(size, size);
         const g = bg.addComponent(Graphics);
-        g.fillColor = new Color(34, 36, 44, 255);
+        g.fillColor = new Color(20, 22, 30, 255);
         g.fillRect(-size * 0.5, -size * 0.5, size, size);
 
-        g.strokeColor = new Color(78, 82, 98, 255);
-        g.lineWidth = 1.5;
-        for (let i = -size * 0.5; i <= size * 0.5; i += 100) {
-            g.moveTo(i, -size * 0.5);
-            g.lineTo(i, size * 0.5);
-            g.moveTo(-size * 0.5, i);
-            g.lineTo(size * 0.5, i);
+        const tileSize = 80;
+        for (let x = -size * 0.5; x < size * 0.5; x += tileSize) {
+            for (let y = -size * 0.5; y < size * 0.5; y += tileSize) {
+                const tx = Math.floor((x + size * 0.5) / tileSize);
+                const ty = Math.floor((y + size * 0.5) / tileSize);
+                const odd = (tx + ty) % 2 === 0;
+
+                g.fillColor = odd ? new Color(36, 40, 56, 255) : new Color(30, 34, 48, 255);
+                g.fillRect(x, y, tileSize, tileSize);
+
+                if ((tx * 7 + ty * 11) % 17 === 0) {
+                    g.fillColor = new Color(48, 54, 76, 255);
+                    g.fillRect(x + 8, y + 8, 8, 8);
+                }
+            }
         }
-        g.stroke();
     }
 
     private createPlayer() {
@@ -178,13 +277,26 @@ export class GameManager extends Component {
             return;
         }
 
-        this._player = new Node('Player');
-        this._player.layer = Layers.Enum.DEFAULT;
-        this._player.setParent(this._worldRoot);
-        this._player.addComponent(UITransform).setContentSize(52, 52);
-        const g = this._player.addComponent(Graphics);
-        g.fillColor = new Color(0, 220, 255, 255);
-        g.fillRect(-26, -26, 52, 52);
+        this._player = this.createPixelNode(
+            this._worldRoot,
+            'Player',
+            'player',
+            [
+                '.0110.',
+                '012210',
+                '123321',
+                '123321',
+                '012210',
+                '.0110.'
+            ],
+            {
+                '0': new Color(0, 110, 170, 255),
+                '1': new Color(0, 220, 255, 255),
+                '2': new Color(120, 245, 255, 255),
+                '3': new Color(240, 255, 255, 255)
+            },
+            8
+        );
 
         this._playerStats = {
             maxHp: PLAYER_CONFIG.maxHp,
@@ -206,13 +318,24 @@ export class GameManager extends Component {
             return;
         }
 
-        this._dogPartner = new Node('DogPartner');
-        this._dogPartner.layer = Layers.Enum.DEFAULT;
-        this._dogPartner.setParent(this._worldRoot);
-        this._dogPartner.addComponent(UITransform).setContentSize(40, 40);
-        const g = this._dogPartner.addComponent(Graphics);
-        g.fillColor = new Color(255, 165, 0, 255);
-        g.fillRect(-20, -20, 40, 40);
+        this._dogPartner = this.createPixelNode(
+            this._worldRoot,
+            'DogPartner',
+            'dog',
+            [
+                '.111.',
+                '12221',
+                '12321',
+                '12221',
+                '.111.'
+            ],
+            {
+                '1': new Color(184, 116, 52, 255),
+                '2': new Color(232, 170, 84, 255),
+                '3': new Color(255, 222, 170, 255)
+            },
+            8
+        );
         this._dogPartner.addComponent(DogController);
     }
 
@@ -311,9 +434,24 @@ export class GameManager extends Component {
         }
 
         const config = ENEMY_CONFIG.lazyDog;
-        const enemy = new Node('Enemy');
-        enemy.layer = Layers.Enum.DEFAULT;
-        enemy.setParent(this._worldRoot);
+        const enemy = this.createPixelNode(
+            this._worldRoot,
+            'Enemy',
+            'enemy',
+            [
+                '.111.',
+                '12221',
+                '12421',
+                '12221',
+                '.111.'
+            ],
+            {
+                '1': new Color(130, 28, 28, 255),
+                '2': new Color(204, 60, 60, 255),
+                '4': new Color(245, 235, 110, 255)
+            },
+            8
+        );
 
         const playerPos = this._player?.getPosition() || new Vec3();
         const angle = Math.random() * Math.PI * 2;
@@ -324,10 +462,6 @@ export class GameManager extends Component {
             0
         );
 
-        enemy.addComponent(UITransform).setContentSize(config.size, config.size);
-        const g = enemy.addComponent(Graphics);
-        g.fillColor = Color.RED;
-        g.fillRect(-config.size * 0.5, -config.size * 0.5, config.size, config.size);
         enemy.addComponent(EnemyController).init(config);
 
         this._enemies.push(enemy);
@@ -335,14 +469,24 @@ export class GameManager extends Component {
 
     public createBullet(start: Vec3, direction: Vec3, damage: number, isCrit: boolean): Node {
         const parent = this._worldRoot ?? this.node;
-        const bullet = new Node('Bullet');
-        bullet.layer = Layers.Enum.DEFAULT;
-        bullet.setParent(parent);
+        const bullet = this.createPixelNode(
+            parent,
+            'Bullet',
+            isCrit ? 'bullet_crit' : 'bullet',
+            [
+                '11',
+                '11'
+            ],
+            isCrit
+                ? {
+                    '1': new Color(255, 230, 90, 255)
+                }
+                : {
+                    '1': new Color(220, 230, 255, 255)
+                },
+            4
+        );
         bullet.setPosition(start);
-        bullet.addComponent(UITransform).setContentSize(10, 10);
-        const g = bullet.addComponent(Graphics);
-        g.fillColor = isCrit ? Color.YELLOW : Color.WHITE;
-        g.fillRect(-5, -5, 10, 10);
         bullet.addComponent(BulletController).init(direction, damage, isCrit);
         this._bullets.push(bullet);
         return bullet;
