@@ -5,7 +5,9 @@
 library/
 temp/
 local/
-build/
+build/*
+!build/web-desktop/
+!build/web-desktop/**
 profiles/
 native
 #//////////////////////////

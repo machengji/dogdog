@@ -1,6 +1,10 @@
 {
   "name": "NewProject_1",
   "uuid": "03436adf-f51a-4754-86db-d78f13d94843",
+  "scripts": {
+    "web:play": "node scripts/serve-web.js",
+    "pages:publish": "node scripts/publish-pages.js"
+  },
   "creator": {
     "version": "3.8.7"
   }
