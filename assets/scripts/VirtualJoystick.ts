@@ -18,6 +18,7 @@ import {
     EventKeyboard,
     KeyCode
 } from 'cc';
+import { view } from 'cc';
 
 const { ccclass, property } = _decorator;
 
@@ -138,7 +139,8 @@ export class VirtualJoystick extends Component {
             this.inputDirection.set(0, 0);
         } else {
             const worldPos = this.getBaseWorldPos();
-            this.joystickCenterPos.set(worldPos.x, worldPos.y, 0);
+            const uiPos = this.worldARToUI(worldPos);
+            this.joystickCenterPos.set(uiPos.x, uiPos.y, 0);
 
             this.stickPos = new Vec2(
                 touchPos.x - this.joystickCenterPos.x,
@@ -331,8 +333,29 @@ export class VirtualJoystick extends Component {
     }
 
     private convertUILocationToLocal(uiPos: Vec2): Vec2 {
-        const nodeWorld = this.node.getWorldPosition();
-        return new Vec2(uiPos.x - nodeWorld.x, uiPos.y - nodeWorld.y);
+        if (!this.touchAreaTransform) {
+            return new Vec2(0, 0);
+        }
+        const worldARPos = this.uiToWorldAR(uiPos);
+        const local = this.touchAreaTransform.convertToNodeSpaceAR(worldARPos);
+        return new Vec2(local.x, local.y);
+    }
+
+    private uiToWorldAR(uiPos: Vec2): Vec3 {
+        const visibleSize = view.getVisibleSize();
+        return new Vec3(
+            uiPos.x - visibleSize.width * 0.5,
+            uiPos.y - visibleSize.height * 0.5,
+            0
+        );
+    }
+
+    private worldARToUI(worldPos: Vec3): Vec2 {
+        const visibleSize = view.getVisibleSize();
+        return new Vec2(
+            worldPos.x + visibleSize.width * 0.5,
+            worldPos.y + visibleSize.height * 0.5
+        );
     }
 
     public isTouchInControlArea(uiPos: Vec2): boolean {
@@ -375,4 +398,3 @@ export class VirtualJoystick extends Component {
         input.off(Input.EventType.KEY_UP, this.onKeyUp, this);
     }
 }
-
