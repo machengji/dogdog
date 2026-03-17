@@ -123,7 +123,7 @@ export class DogController extends Component {
         // 应用情绪效果
         this.attackSpeedBonus = moodConfig.effect.attackSpeed;
         this.damageBonus = moodConfig.effect.damage;
-        this.followCloser = moodConfig.effect.followCloser || false;
+        this.followCloser = 'followCloser' in moodConfig.effect ? !!moodConfig.effect.followCloser : false;
 
         // 设置情绪持续时间
         if (moodConfig.duration > 0) {
@@ -248,7 +248,7 @@ export class DogController extends Component {
 
         const dist = Vec3.distance(dogPos, targetPos);
         if (dist > 10) {
-            const direction = new Vec3().subtract(targetPos, dogPos).normalize();
+            const direction = targetPos.clone().subtract(dogPos).normalize();
             const moveSpeed = 120;
             let newPos = dogPos.add(direction.clone().multiplyScalar(moveSpeed * 0.016));
 

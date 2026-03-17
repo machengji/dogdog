@@ -46,8 +46,8 @@ export class VirtualJoystick extends Component {
     private joystickEnabled: boolean = true;
 
     onLoad() {
-        // 为根节点添加 UITransform 并设置足够大的触摸区域
-        const transform = this.node.addComponent(UITransform);
+        // Ensure UITransform exists and set a sufficiently large touch area.
+        const transform = this.node.getComponent(UITransform) ?? this.node.addComponent(UITransform);
         // 设置触摸区域为摇杆半径的2.5倍，确保容易触摸到
         const touchSize = this.joystickRadius * 2.5;
         transform.setContentSize(touchSize, touchSize);
@@ -69,6 +69,7 @@ export class VirtualJoystick extends Component {
         // 创建摇杆底座（外圆）- 相对于父节点中心
         this.baseNode = new Node('JoystickBase');
         this.baseNode.setParent(this.node);
+        this.baseNode.layer = this.node.layer; // 继承父节点的层级
         this.baseNode.setPosition(new Vec3(0, 0, 0));
 
         const baseTransform = this.baseNode.addComponent(UITransform);
@@ -80,6 +81,7 @@ export class VirtualJoystick extends Component {
         // 创建摇杆柄（内圆）
         this.stickNode = new Node('JoystickStick');
         this.stickNode.setParent(this.baseNode);
+        this.stickNode.layer = this.node.layer; // 继承父节点的层级
         this.stickNode.setPosition(new Vec3(0, 0, 0));
 
         const stickTransform = this.stickNode.addComponent(UITransform);

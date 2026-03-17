@@ -1,3 +1,5 @@
+import { Node } from 'cc';
+
 /**
  * 游戏类型定义
  * 狗王枪神 - 纯代码驱动
@@ -37,7 +39,7 @@ export interface EnemyData {
 export interface EnemyInstance {
     config: EnemyData;
     currentHp: number;
-    node: cc.Node;
+    node: Node;
 }
 
 // ==================== 狗伙伴类型 ====================
@@ -109,14 +111,14 @@ export interface GameEvent {
 }
 
 export interface DamageEvent {
-    target: cc.Node;
+    target: Node;
     damage: number;
     isCrit: boolean;
-    source: cc.Node;
+    source: Node;
 }
 
 export interface KillEvent {
-    enemy: cc.Node;
+    enemy: Node;
     gold: number;
 }
 
