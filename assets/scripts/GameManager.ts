@@ -101,10 +101,8 @@ export class GameManager extends Component {
         const designHeight = isPortrait ? this._designHeight : this._designWidth;
 
         view.setDesignResolutionSize(designWidth, designHeight, ResolutionPolicy.NO_BORDER);
-
-        const visible = view.getVisibleSize();
-        this._screenWidth = visible.width;
-        this._screenHeight = visible.height;
+        this._screenWidth = designWidth;
+        this._screenHeight = designHeight;
     }
 
     private onViewResize() {

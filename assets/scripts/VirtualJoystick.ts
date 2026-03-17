@@ -342,19 +342,19 @@ export class VirtualJoystick extends Component {
     }
 
     private uiToWorldAR(uiPos: Vec2): Vec3 {
-        const visibleSize = view.getVisibleSize();
+        const designSize = view.getDesignResolutionSize();
         return new Vec3(
-            uiPos.x - visibleSize.width * 0.5,
-            uiPos.y - visibleSize.height * 0.5,
+            uiPos.x - designSize.width * 0.5,
+            uiPos.y - designSize.height * 0.5,
             0
         );
     }
 
     private worldARToUI(worldPos: Vec3): Vec2 {
-        const visibleSize = view.getVisibleSize();
+        const designSize = view.getDesignResolutionSize();
         return new Vec2(
-            worldPos.x + visibleSize.width * 0.5,
-            worldPos.y + visibleSize.height * 0.5
+            worldPos.x + designSize.width * 0.5,
+            worldPos.y + designSize.height * 0.5
         );
     }
 
