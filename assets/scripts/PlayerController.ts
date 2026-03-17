@@ -67,7 +67,6 @@ export class PlayerController extends Component {
         this.updateJoystickMovement(deltaTime);
         this.updateDodge(deltaTime);
         this.updateAutoFire(deltaTime);
-        this.updateDogFollow();
     }
 
     private onKeyDown(event: EventKeyboard) {
@@ -227,9 +226,10 @@ export class PlayerController extends Component {
         }
 
         this.fireTimer += deltaTime;
-        const fireRate = 1 / 3;
+        const fireRate = Math.max(0.5, stats.fireRate || 3);
+        const fireInterval = 1 / fireRate;
 
-        if (this.fireTimer >= fireRate) {
+        if (this.fireTimer >= fireInterval) {
             this.fireTimer = 0;
             this.fire();
         }
@@ -249,19 +249,6 @@ export class PlayerController extends Component {
         const damage = isCrit ? stats.attack * stats.critDamage : stats.attack;
 
         GameManager.instance.createBullet(playerPos.clone(), direction, damage, isCrit);
-    }
-
-    private updateDogFollow() {
-        const dog = GameManager.instance.getDogPartner();
-        if (!dog) {
-            return;
-        }
-
-        const playerPos = this.node.getPosition();
-        const dogPos = dog.getPosition();
-        const targetPos = playerPos.clone().add(new Vec3(60, 30, 0));
-        const newPos = dogPos.lerp(targetPos, 0.05);
-        dog.setPosition(newPos);
     }
 
     private convertToWorldPosition(uiPos: Vec2): Vec3 {

@@ -38,6 +38,22 @@ import { ComboManager } from './ComboManager';
 
 const { ccclass } = _decorator;
 
+type SpawnWeightItem = {
+    config: any;
+    weight: number;
+};
+
+type SpawnPhase = {
+    interval: number;
+    pool: SpawnWeightItem[];
+};
+
+type UpgradeChoice = {
+    id: string;
+    title: string;
+    description: string;
+};
+
 @ccclass('GameManager')
 export class GameManager extends Component {
     private static _instance: GameManager | null = null;
@@ -70,6 +86,11 @@ export class GameManager extends Component {
     private _virtualJoystick: VirtualJoystick | null = null;
     private _pixelFrames: Record<string, SpriteFrame> = {};
     private _resultPanel: Node | null = null;
+    private _levelUpPanel: Node | null = null;
+
+    private _level = 1;
+    private _exp = 0;
+    private _nextLevelExp = 30;
 
     private _restartListenerRegistered = false;
     private _restartEnableTime = 0;
@@ -82,6 +103,16 @@ export class GameManager extends Component {
     private readonly _landscapeWorldZoom = 1.16;
     private readonly _hudTopMargin = 42;
     private _isPortrait = true;
+    private readonly _upgradePool: UpgradeChoice[] = [
+        { id: 'atk_up', title: '火力过载', description: '攻击 +45%' },
+        { id: 'fire_rate_up', title: '疾速连发', description: '射速 +1.4' },
+        { id: 'speed_up', title: '疾风走位', description: '移速 +65' },
+        { id: 'crit_up', title: '要害洞察', description: '暴击率 +12%' },
+        { id: 'crit_dmg_up', title: '毁伤弹芯', description: '暴击伤害 +0.8' },
+        { id: 'range_up', title: '超距索敌', description: '射程 +90' },
+        { id: 'heal_up', title: '战地补给', description: '恢复 60% 生命' },
+        { id: 'hp_up', title: '重装外骨骼', description: '最大生命 +40 并回复 40' }
+    ];
 
     onLoad() {
         GameManager._instance = this;
@@ -90,6 +121,8 @@ export class GameManager extends Component {
 
     onDestroy() {
         this.unregisterRestartListener();
+        this._levelUpPanel?.destroy();
+        this._levelUpPanel = null;
         view.setResizeCallback(undefined as unknown as () => void);
     }
 
@@ -138,6 +171,7 @@ export class GameManager extends Component {
         this.updateHUDLabelStyles();
         this.repositionVirtualJoystick();
         this.updateResultPanelLayout();
+        this.updateLevelUpPanelLayout();
 
         const comboManager = this.getComboManager();
         comboManager?.setUIRoot(this._hudNode);
@@ -166,10 +200,13 @@ export class GameManager extends Component {
         this.setUIPosition('GoldLabel', halfW - (isNarrow ? 80 : 100), topY);
         this.setUIPosition('ScoreLabel', 0, topY);
         this.setUIPosition('TimerLabel', 0, topY - (isNarrow ? 34 : 38));
+        this.setUIPosition('LevelLabel', -halfW + (isNarrow ? 130 : 160), topY - (isNarrow ? 34 : 38));
+        this.setUIPosition('ExpLabel', -halfW + (isNarrow ? 150 : 190), topY - (isNarrow ? 66 : 72));
+        this.setUIPosition('DogMoodLabel', -halfW + (isNarrow ? 46 : 56), topY - (isNarrow ? 34 : 38));
 
         const moodNode = this._hudNode.getChildByName('DogMoodLabel');
         if (moodNode) {
-            moodNode.active = false;
+            moodNode.active = true;
         }
     }
 
@@ -209,6 +246,18 @@ export class GameManager extends Component {
             timer.lineHeight = mainSize + 4;
         }
 
+        const level = this._hudNode.getChildByName('LevelLabel')?.getComponent(Label);
+        if (level) {
+            level.fontSize = isNarrow ? 20 : 24;
+            level.lineHeight = level.fontSize + 4;
+        }
+
+        const exp = this._hudNode.getChildByName('ExpLabel')?.getComponent(Label);
+        if (exp) {
+            exp.fontSize = isNarrow ? 18 : 22;
+            exp.lineHeight = exp.fontSize + 4;
+        }
+
         const mood = this._hudNode.getChildByName('DogMoodLabel')?.getComponent(Label);
         if (mood) {
             mood.fontSize = dogSize;
@@ -242,6 +291,24 @@ export class GameManager extends Component {
         if (bg) {
             bg.clear();
             bg.fillColor = new Color(0, 0, 0, 180);
+            bg.fillRect(-this._screenWidth * 0.5, -this._screenHeight * 0.5, this._screenWidth, this._screenHeight);
+        }
+    }
+
+    private updateLevelUpPanelLayout() {
+        if (!this._levelUpPanel?.isValid) {
+            return;
+        }
+
+        const panelTransform = this._levelUpPanel.getComponent(UITransform);
+        if (panelTransform) {
+            panelTransform.setContentSize(this._screenWidth, this._screenHeight);
+        }
+
+        const bg = this._levelUpPanel.getComponent(Graphics);
+        if (bg) {
+            bg.clear();
+            bg.fillColor = new Color(0, 0, 0, 192);
             bg.fillRect(-this._screenWidth * 0.5, -this._screenHeight * 0.5, this._screenWidth, this._screenHeight);
         }
     }
@@ -358,7 +425,8 @@ export class GameManager extends Component {
         assetKey: string,
         pattern: string[],
         palette: Record<string, Color>,
-        pixelSize: number
+        pixelSize: number,
+        preferTexture = false
     ): Node {
         const node = new Node(name);
         node.layer = Layers.Enum.DEFAULT;
@@ -371,7 +439,7 @@ export class GameManager extends Component {
         node.addComponent(UITransform).setContentSize(width, height);
 
         const frame = this._pixelFrames[assetKey];
-        if (frame) {
+        if (preferTexture && frame) {
             const sprite = node.addComponent(Sprite);
             sprite.spriteFrame = frame;
         } else {
@@ -454,20 +522,24 @@ export class GameManager extends Component {
             'Player',
             'player',
             [
-                '.0110.',
-                '012210',
-                '123321',
-                '123321',
-                '012210',
-                '.0110.'
+                '..0110..',
+                '.012221.',
+                '01243210',
+                '12344321',
+                '12344321',
+                '12333321',
+                '12222221',
+                '..1..1..'
             ],
             {
-                '0': new Color(0, 110, 170, 255),
-                '1': new Color(0, 220, 255, 255),
-                '2': new Color(120, 245, 255, 255),
-                '3': new Color(240, 255, 255, 255)
+                '0': new Color(6, 56, 92, 255),
+                '1': new Color(16, 130, 208, 255),
+                '2': new Color(24, 198, 255, 255),
+                '3': new Color(104, 236, 255, 255),
+                '4': new Color(206, 255, 255, 255),
+                '5': new Color(255, 255, 255, 255)
             },
-            8
+            6
         );
 
         this._playerStats = {
@@ -475,6 +547,7 @@ export class GameManager extends Component {
             currentHp: PLAYER_CONFIG.maxHp,
             attack: PLAYER_CONFIG.baseAttack,
             speed: PLAYER_CONFIG.baseSpeed,
+            fireRate: PLAYER_CONFIG.fireRate ?? 3,
             critRate: PLAYER_CONFIG.baseCritRate,
             critDamage: PLAYER_CONFIG.baseCritDamage,
             dodgeRate: PLAYER_CONFIG.dodgeRate,
@@ -495,18 +568,23 @@ export class GameManager extends Component {
             'DogPartner',
             'dog',
             [
-                '.111.',
-                '12221',
-                '12321',
-                '12221',
-                '.111.'
+                '..11.11..',
+                '122222221',
+                '123333321',
+                '123434321',
+                '123333321',
+                '.12222221',
+                '..14541..',
+                '..1...1..'
             ],
             {
-                '1': new Color(184, 116, 52, 255),
-                '2': new Color(232, 170, 84, 255),
-                '3': new Color(255, 222, 170, 255)
+                '1': new Color(96, 58, 26, 255),
+                '2': new Color(168, 98, 44, 255),
+                '3': new Color(232, 160, 84, 255),
+                '4': new Color(255, 234, 196, 255),
+                '5': new Color(40, 32, 24, 255)
             },
-            8
+            6
         );
 
         this._dogPartner.addComponent(DogController);
@@ -530,6 +608,8 @@ export class GameManager extends Component {
         this.createLabel(this._hudNode, 'GoldLabel', halfW - 100, halfH - 40, '金币: 0');
         this.createLabel(this._hudNode, 'ScoreLabel', 0, halfH - 40, '分数: 0');
         this.createLabel(this._hudNode, 'TimerLabel', 0, halfH - 78, '时间: 03:00');
+        this.createLabel(this._hudNode, 'LevelLabel', -halfW + 160, halfH - 78, '等级: 1');
+        this.createLabel(this._hudNode, 'ExpLabel', -halfW + 190, halfH - 112, '经验: 0/30');
         this.createLabel(this._hudNode, 'DogMoodLabel', -halfW + 320, halfH - 40, '🐕');
         this.updateHUDLabelStyles();
         this.layoutHUD();
@@ -620,6 +700,16 @@ export class GameManager extends Component {
         if (scoreLabel) {
             scoreLabel.string = `分数: ${this._score}`;
         }
+
+        const levelLabel = this._hudNode?.getChildByName('LevelLabel')?.getComponent(Label);
+        if (levelLabel) {
+            levelLabel.string = `等级: ${this._level}`;
+        }
+
+        const expLabel = this._hudNode?.getChildByName('ExpLabel')?.getComponent(Label);
+        if (expLabel) {
+            expLabel.string = `经验: ${Math.floor(this._exp)}/${this._nextLevelExp}`;
+        }
     }
 
     private updateTimerUI() {
@@ -662,44 +752,195 @@ export class GameManager extends Component {
         this._difficultyMultiplier = Math.max(0.7, Math.min(1.8, target));
     }
 
-    private getCurrentSpawnRates(): { lazyDogRate: number; crazyDogRate: number } {
-        const phases = Array.isArray(SPAWN_CONFIG?.phases) ? SPAWN_CONFIG.phases : [];
-        if (phases.length === 0) {
-            return { lazyDogRate: 1, crazyDogRate: 0 };
+    private getBruteEnemyConfig() {
+        return {
+            id: 'bruteDog',
+            name: '重甲犬',
+            hp: 135,
+            attack: 16,
+            speed: 78,
+            size: 46,
+            color: '#7A2E21',
+            skill: 'armor',
+            dropGold: 28
+        };
+    }
+
+    private getSpawnPhase(): SpawnPhase {
+        const lazy = ENEMY_CONFIG.lazyDog;
+        const crazy = ENEMY_CONFIG.crazyDog ?? ENEMY_CONFIG.lazyDog;
+        const fat = ENEMY_CONFIG.fatDog ?? {
+            id: 'fatDog',
+            name: '胖犬',
+            hp: 120,
+            attack: 12,
+            speed: 42,
+            size: 52,
+            color: '#DAA520',
+            skill: 'attract',
+            dropGold: 22
+        };
+        const brute = this.getBruteEnemyConfig();
+
+        if (this._gameTimer < 15) {
+            return {
+                interval: 0.88,
+                pool: [{ config: lazy, weight: 1 }]
+            };
         }
 
-        let selected = phases[0];
-        for (const phase of phases) {
-            if (this._gameTimer >= phase.time) {
-                selected = phase;
-            }
+        if (this._gameTimer < 30) {
+            return {
+                interval: 0.72,
+                pool: [
+                    { config: lazy, weight: 0.72 },
+                    { config: crazy, weight: 0.28 }
+                ]
+            };
+        }
+
+        if (this._gameTimer < 60) {
+            return {
+                interval: 0.6,
+                pool: [
+                    { config: lazy, weight: 0.52 },
+                    { config: crazy, weight: 0.33 },
+                    { config: fat, weight: 0.15 }
+                ]
+            };
         }
 
         return {
-            lazyDogRate: selected.lazyDogRate ?? 1,
-            crazyDogRate: selected.crazyDogRate ?? 0
+            interval: 0.48,
+            pool: [
+                { config: lazy, weight: 0.42 },
+                { config: crazy, weight: 0.3 },
+                { config: fat, weight: 0.18 },
+                { config: brute, weight: 0.1 }
+            ]
         };
     }
 
     private getSpawnInterval(): number {
-        const rates = this.getCurrentSpawnRates();
-        const totalRate = Math.max(0.1, rates.lazyDogRate + rates.crazyDogRate);
-        const interval = 1 / (totalRate * this._difficultyMultiplier);
-        return Math.max(0.2, Math.min(1.5, interval));
+        const phase = this.getSpawnPhase();
+        const interval = phase.interval / Math.max(0.7, this._difficultyMultiplier);
+        return Math.max(0.18, Math.min(1.2, interval));
     }
 
     private pickEnemyConfig(): any {
-        const rates = this.getCurrentSpawnRates();
-        const total = rates.lazyDogRate + rates.crazyDogRate;
-        if (total <= 0) {
+        const phase = this.getSpawnPhase();
+        const totalWeight = phase.pool.reduce((sum, item) => sum + Math.max(0, item.weight), 0);
+        if (totalWeight <= 0) {
             return ENEMY_CONFIG.lazyDog;
         }
 
-        const roll = Math.random() * total;
-        if (roll < rates.lazyDogRate) {
-            return ENEMY_CONFIG.lazyDog;
+        let roll = Math.random() * totalWeight;
+        for (const item of phase.pool) {
+            const weight = Math.max(0, item.weight);
+            if (roll <= weight) {
+                return item.config;
+            }
+            roll -= weight;
         }
-        return ENEMY_CONFIG.crazyDog ?? ENEMY_CONFIG.lazyDog;
+
+        return phase.pool[phase.pool.length - 1]?.config ?? ENEMY_CONFIG.lazyDog;
+    }
+
+    private getEnemyVisual(enemyId?: string): {
+        pattern: string[];
+        palette: Record<string, Color>;
+        pixelSize: number;
+    } {
+        if (enemyId === 'crazyDog') {
+            return {
+                pattern: [
+                    '..1111..',
+                    '.125552.',
+                    '12566652',
+                    '12377332',
+                    '12333332',
+                    '.1222221',
+                    '..14444.'
+                ],
+                palette: {
+                    '1': new Color(92, 22, 18, 255),
+                    '2': new Color(180, 38, 34, 255),
+                    '3': new Color(228, 76, 68, 255),
+                    '4': new Color(255, 210, 92, 255),
+                    '5': new Color(255, 128, 118, 255),
+                    '6': new Color(255, 178, 164, 255),
+                    '7': new Color(38, 16, 12, 255)
+                },
+                pixelSize: 6
+            };
+        }
+
+        if (enemyId === 'fatDog') {
+            return {
+                pattern: [
+                    '.1111111.',
+                    '122222222',
+                    '123333321',
+                    '123444321',
+                    '123444321',
+                    '123333321',
+                    '122222222',
+                    '.1555551.'
+                ],
+                palette: {
+                    '1': new Color(102, 78, 30, 255),
+                    '2': new Color(168, 126, 52, 255),
+                    '3': new Color(222, 176, 88, 255),
+                    '4': new Color(255, 224, 150, 255),
+                    '5': new Color(64, 38, 20, 255)
+                },
+                pixelSize: 7
+            };
+        }
+
+        if (enemyId === 'bruteDog') {
+            return {
+                pattern: [
+                    '..11111..',
+                    '.12222221',
+                    '123333321',
+                    '123454321',
+                    '123454321',
+                    '123333321',
+                    '.12222221',
+                    '..16661..'
+                ],
+                palette: {
+                    '1': new Color(82, 20, 16, 255),
+                    '2': new Color(136, 46, 34, 255),
+                    '3': new Color(188, 82, 68, 255),
+                    '4': new Color(246, 150, 128, 255),
+                    '5': new Color(255, 224, 178, 255),
+                    '6': new Color(56, 22, 18, 255)
+                },
+                pixelSize: 7
+            };
+        }
+
+        return {
+            pattern: [
+                '..1111..',
+                '.1222221.',
+                '12333321',
+                '12343421',
+                '12333321',
+                '.1222221.',
+                '..14541..'
+            ],
+            palette: {
+                '1': new Color(84, 22, 22, 255),
+                '2': new Color(136, 38, 38, 255),
+                '3': new Color(204, 68, 68, 255),
+                '4': new Color(252, 224, 136, 255),
+                '5': new Color(34, 20, 20, 255)
+            },
+            pixelSize: 6
+        };
     }
 
     public spawnEnemy(config?: any) {
@@ -708,24 +949,15 @@ export class GameManager extends Component {
         }
 
         const enemyConfig = config ?? this.pickEnemyConfig();
+        const visual = this.getEnemyVisual(enemyConfig?.id);
 
         const enemy = this.createPixelNode(
             this._worldRoot,
             'Enemy',
             'enemy',
-            [
-                '.111.',
-                '12221',
-                '12421',
-                '12221',
-                '.111.'
-            ],
-            {
-                '1': new Color(130, 28, 28, 255),
-                '2': new Color(204, 60, 60, 255),
-                '4': new Color(245, 235, 110, 255)
-            },
-            8
+            visual.pattern,
+            visual.palette,
+            visual.pixelSize
         );
 
         const playerPos = this._player?.getPosition() || new Vec3();
@@ -742,10 +974,14 @@ export class GameManager extends Component {
         const scale = targetSize / baseSize;
         enemy.setScale(scale, scale, 1);
 
-        if (enemyConfig?.id === 'crazyDog') {
-            const sprite = enemy.getComponent(Sprite);
-            if (sprite) {
+        const sprite = enemy.getComponent(Sprite);
+        if (sprite) {
+            if (enemyConfig?.id === 'crazyDog') {
                 sprite.color = new Color(255, 132, 110, 255);
+            } else if (enemyConfig?.id === 'fatDog') {
+                sprite.color = new Color(229, 184, 90, 255);
+            } else if (enemyConfig?.id === 'bruteDog') {
+                sprite.color = new Color(190, 90, 80, 255);
             }
         }
 
@@ -760,12 +996,13 @@ export class GameManager extends Component {
             'Bullet',
             isCrit ? 'bullet_crit' : 'bullet',
             [
-                '11',
-                '11'
+                '.1.',
+                '111',
+                '.1.'
             ],
             isCrit
-                ? { '1': new Color(255, 230, 90, 255) }
-                : { '1': new Color(220, 230, 255, 255) },
+                ? { '1': new Color(255, 205, 64, 255) }
+                : { '1': new Color(186, 226, 255, 255) },
             4
         );
         bullet.setPosition(start);
@@ -778,18 +1015,26 @@ export class GameManager extends Component {
         this._gameState = GameState.PLAYING;
         this._gold = 0;
         this._score = 0;
+        this._level = 1;
+        this._exp = 0;
+        this._nextLevelExp = this.calculateNextLevelExp(this._level);
         this._gameTimer = 0;
         this._spawnTimer = 0;
         this._difficultyCheckTimer = 0;
         this._difficultyMultiplier = 1;
         this._resultPanel?.destroy();
         this._resultPanel = null;
+        this._levelUpPanel?.destroy();
+        this._levelUpPanel = null;
         this.unregisterRestartListener();
 
         if (this._virtualJoystick) {
             this._virtualJoystick.setEnabled(true);
             this._virtualJoystick.node.active = true;
         }
+
+        this.updateTimerUI();
+        this.updateHUDStats();
     }
 
     private enterResult(state: GameState, title: string) {
@@ -803,6 +1048,9 @@ export class GameManager extends Component {
             this._virtualJoystick.setEnabled(false);
             this._virtualJoystick.node.active = false;
         }
+
+        this._levelUpPanel?.destroy();
+        this._levelUpPanel = null;
 
         this.showResultPanel(title);
         this.registerRestartListener();
@@ -838,7 +1086,7 @@ export class GameManager extends Component {
             'ResultInfo',
             0,
             10,
-            `分数: ${this._score}  金币: ${this._gold}  存活: ${Math.floor(this._gameTimer)}秒`
+            `分数: ${this._score}  金币: ${this._gold}  等级: ${this._level}  存活: ${Math.floor(this._gameTimer)}秒`
         );
         const infoLabel = infoNode.getComponent(Label);
         if (infoLabel) {
@@ -892,6 +1140,7 @@ export class GameManager extends Component {
 
         this._gold += gold;
         this._score += gold * 10;
+        this.addExperience(Math.max(8, Math.round(gold * 1.5)));
 
         const comboManager = this.getComboManager();
         comboManager?.addKill();
@@ -900,14 +1149,181 @@ export class GameManager extends Component {
         dogCtrl?.resetNoKillTimer();
     }
 
+    private calculateNextLevelExp(level: number): number {
+        const levelIndex = Math.max(1, level);
+        return Math.floor(20 + levelIndex * 7 + Math.pow(levelIndex, 1.12) * 3);
+    }
+
+    private addExperience(exp: number) {
+        if (exp <= 0 || this._gameState !== GameState.PLAYING) {
+            return;
+        }
+
+        this._exp += exp;
+
+        while (this._exp >= this._nextLevelExp) {
+            this._exp -= this._nextLevelExp;
+            this._level += 1;
+            this._nextLevelExp = this.calculateNextLevelExp(this._level);
+            this.showLevelUpPanel();
+
+            // 升级选择期间暂停，避免连续弹出覆盖。
+            if (this._gameState !== GameState.PLAYING) {
+                break;
+            }
+        }
+
+        this.updateHUDStats();
+    }
+
+    private pickUpgradeChoices(count: number): UpgradeChoice[] {
+        const pool = [...this._upgradePool];
+        const picks: UpgradeChoice[] = [];
+        while (pool.length > 0 && picks.length < count) {
+            const idx = Math.floor(Math.random() * pool.length);
+            const [choice] = pool.splice(idx, 1);
+            picks.push(choice);
+        }
+        return picks;
+    }
+
+    private showLevelUpPanel() {
+        if (!this._uiCanvasNode || this._gameState !== GameState.PLAYING) {
+            return;
+        }
+
+        this._gameState = GameState.PAUSED;
+        if (this._virtualJoystick) {
+            this._virtualJoystick.setEnabled(false);
+            this._virtualJoystick.node.active = false;
+        }
+
+        this._levelUpPanel?.destroy();
+        const panel = new Node('LevelUpPanel');
+        panel.layer = Layers.Enum.UI_2D;
+        panel.setParent(this._uiCanvasNode);
+        panel.addComponent(UITransform).setContentSize(this._screenWidth, this._screenHeight);
+        const bg = panel.addComponent(Graphics);
+        bg.fillColor = new Color(0, 0, 0, 192);
+        bg.fillRect(-this._screenWidth * 0.5, -this._screenHeight * 0.5, this._screenWidth, this._screenHeight);
+        this._levelUpPanel = panel;
+
+        const titleNode = this.createLabel(panel, 'LevelUpTitle', 0, this._screenHeight * 0.5 - 120, `升级！Lv.${this._level}`);
+        const titleLabel = titleNode.getComponent(Label);
+        if (titleLabel) {
+            titleLabel.fontSize = 46;
+            titleLabel.color = new Color(255, 227, 126, 255);
+        }
+
+        const hintNode = this.createLabel(panel, 'LevelUpHint', 0, this._screenHeight * 0.5 - 176, '选择 1 项强化');
+        const hintLabel = hintNode.getComponent(Label);
+        if (hintLabel) {
+            hintLabel.fontSize = 26;
+            hintLabel.color = new Color(220, 220, 220, 255);
+        }
+
+        const choices = this.pickUpgradeChoices(3);
+        const cardHeight = 118;
+        const startY = 78;
+
+        choices.forEach((choice, index) => {
+            const card = new Node(`UpgradeCard_${choice.id}`);
+            card.layer = Layers.Enum.UI_2D;
+            card.setParent(panel);
+            card.setPosition(0, startY - index * (cardHeight + 20), 0);
+            card.addComponent(UITransform).setContentSize(Math.min(620, this._screenWidth - 72), cardHeight);
+
+            const cardG = card.addComponent(Graphics);
+            cardG.fillColor = new Color(36, 48, 68, 255);
+            const cardW = Math.min(620, this._screenWidth - 72);
+            cardG.roundRect(-cardW * 0.5, -cardHeight * 0.5, cardW, cardHeight, 14);
+            cardG.fill();
+            cardG.strokeColor = new Color(130, 178, 255, 255);
+            cardG.lineWidth = 2;
+            cardG.roundRect(-cardW * 0.5, -cardHeight * 0.5, cardW, cardHeight, 14);
+            cardG.stroke();
+
+            const title = this.createLabel(card, `UpgradeTitle_${index}`, 0, 18, choice.title);
+            const titleText = title.getComponent(Label);
+            if (titleText) {
+                titleText.fontSize = 30;
+                titleText.color = new Color(255, 255, 255, 255);
+            }
+
+            const desc = this.createLabel(card, `UpgradeDesc_${index}`, 0, -22, choice.description);
+            const descText = desc.getComponent(Label);
+            if (descText) {
+                descText.fontSize = 24;
+                descText.color = new Color(176, 214, 255, 255);
+            }
+
+            card.on(Node.EventType.TOUCH_END, () => {
+                this.applyUpgrade(choice.id);
+            }, this);
+        });
+    }
+
+    private applyUpgrade(upgradeId: string) {
+        switch (upgradeId) {
+            case 'atk_up':
+                this._playerStats.attack = Math.round(this._playerStats.attack * 1.45);
+                break;
+            case 'fire_rate_up':
+                this._playerStats.fireRate = Math.min(12, this._playerStats.fireRate + 1.4);
+                break;
+            case 'speed_up':
+                this._playerStats.speed += 65;
+                break;
+            case 'crit_up':
+                this._playerStats.critRate = Math.min(0.85, this._playerStats.critRate + 0.12);
+                break;
+            case 'crit_dmg_up':
+                this._playerStats.critDamage += 0.8;
+                break;
+            case 'range_up':
+                this._playerStats.range += 90;
+                break;
+            case 'heal_up': {
+                const heal = this._playerStats.maxHp * 0.6;
+                this._playerStats.currentHp = Math.min(this._playerStats.maxHp, this._playerStats.currentHp + heal);
+                break;
+            }
+            case 'hp_up':
+                this._playerStats.maxHp += 40;
+                this._playerStats.currentHp = Math.min(this._playerStats.maxHp, this._playerStats.currentHp + 40);
+                break;
+            default:
+                break;
+        }
+
+        this.refreshHpBar();
+        this._levelUpPanel?.destroy();
+        this._levelUpPanel = null;
+
+        this._gameState = GameState.PLAYING;
+        if (this._virtualJoystick) {
+            this._virtualJoystick.setEnabled(true);
+            this._virtualJoystick.node.active = true;
+        }
+
+        if (this._exp >= this._nextLevelExp) {
+            this.showLevelUpPanel();
+        }
+        this.updateHUDStats();
+    }
+
+    private refreshHpBar() {
+        const hpBar = this._hudNode?.getChildByName('HPBar');
+        if (!hpBar) {
+            return;
+        }
+        const ratio = this._playerStats.currentHp / Math.max(1, this._playerStats.maxHp);
+        hpBar.setScale(Math.max(0, ratio), 1, 1);
+    }
+
     public damagePlayer(damage: number) {
         this._playerStats.currentHp = Math.max(0, this._playerStats.currentHp - damage);
-
-        const hpBar = this._hudNode?.getChildByName('HPBar');
-        if (hpBar) {
-            const ratio = this._playerStats.currentHp / Math.max(1, this._playerStats.maxHp);
-            hpBar.setScale(Math.max(0, ratio), 1, 1);
-        }
+        this.refreshHpBar();
 
         if (this._playerStats.currentHp <= 0) {
             this.enterResult(GameState.DEFEAT, '失败');

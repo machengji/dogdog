@@ -72,6 +72,7 @@ export interface PlayerStats {
     currentHp: number;
     attack: number;
     speed: number;
+    fireRate: number;
     critRate: number;
     critDamage: number;
     dodgeRate: number;
