@@ -1,4 +1,4 @@
-import {
+﻿import {
     _decorator,
     Component,
     Node,
@@ -17,9 +17,17 @@ import {
     Camera,
     Layers,
     Canvas,
-    RenderRoot2D
+    RenderRoot2D,
+    input,
+    Input,
+    EventTouch
 } from 'cc';
-import { PLAYER_CONFIG, ENEMY_CONFIG } from './Constants';
+import {
+    PLAYER_CONFIG,
+    ENEMY_CONFIG,
+    SPAWN_CONFIG,
+    GAME_TIME_CONFIG
+} from './Constants';
 import { GameState, PlayerStats } from './types/GameTypes';
 import { PlayerController } from './PlayerController';
 import { EnemyController } from './EnemyController';
@@ -48,6 +56,8 @@ export class GameManager extends Component {
     private _score = 0;
     private _gameTimer = 0;
     private _spawnTimer = 0;
+    private _difficultyCheckTimer = 0;
+    private _difficultyMultiplier = 1;
     private _screenWidth = 0;
     private _screenHeight = 0;
 
@@ -58,13 +68,21 @@ export class GameManager extends Component {
     private _worldRoot: Node | null = null;
     private _virtualJoystick: VirtualJoystick | null = null;
     private _pixelFrames: Record<string, SpriteFrame> = {};
+    private _resultPanel: Node | null = null;
+
+    private _restartListenerRegistered = false;
+    private _restartEnableTime = 0;
 
     private readonly _cameraZ = 600;
-    private readonly _maxEnemies = 40;
+    private readonly _maxEnemies = Math.max(30, SPAWN_CONFIG?.maxEnemies ?? 40);
 
     onLoad() {
         GameManager._instance = this;
         this.initScreen();
+    }
+
+    onDestroy() {
+        this.unregisterRestartListener();
     }
 
     private initScreen() {
@@ -91,9 +109,7 @@ export class GameManager extends Component {
             ['bullet_crit', 'pixel/bullet_crit']
         ] as const;
 
-        await Promise.all(
-            assets.map(([key, path]) => this.loadPixelFrame(path, key))
-        );
+        await Promise.all(assets.map(([key, path]) => this.loadPixelFrame(path, key)));
     }
 
     private loadPixelFrame(path: string, key: string): Promise<void> {
@@ -115,8 +131,6 @@ export class GameManager extends Component {
             return;
         }
 
-        // If GameManager is nested under Canvas in editor, move it to scene root first.
-        // Otherwise destroying legacy Canvas would also destroy this component.
         if (this.node.parent !== scene) {
             this.node.setParent(scene);
         }
@@ -166,7 +180,6 @@ export class GameManager extends Component {
         const canvas = canvasNode.addComponent(Canvas);
         canvas.cameraComponent = uiCam;
         canvas.alignCanvasWithScreen = true;
-
         this._uiCanvasNode = canvasNode;
 
         if (!this.node.getComponent(ComboManager)) {
@@ -178,6 +191,10 @@ export class GameManager extends Component {
         this.createDogPartner();
         this.createHUD();
         this.createVirtualJoystick();
+
+        const comboManager = this.getComboManager();
+        comboManager?.setUIRoot(this._hudNode);
+        comboManager?.resetCombo();
     }
 
     private createPixelNode(
@@ -336,6 +353,7 @@ export class GameManager extends Component {
             },
             8
         );
+
         this._dogPartner.addComponent(DogController);
     }
 
@@ -354,9 +372,10 @@ export class GameManager extends Component {
 
         this.createUIRect(this._hudNode, 'HP_BG', -halfW + 120, halfH - 40, 200, 20, new Color(50, 50, 50, 220));
         this.createUIRect(this._hudNode, 'HPBar', -halfW + 120, halfH - 40, 196, 16, Color.RED);
-        this.createLabel(this._hudNode, 'GoldLabel', halfW - 100, halfH - 40, 'Gold: 0');
-        this.createLabel(this._hudNode, 'ScoreLabel', 0, halfH - 40, 'Score: 0');
-        this.createLabel(this._hudNode, 'DogMoodLabel', -halfW + 320, halfH - 40, 'DOG');
+        this.createLabel(this._hudNode, 'GoldLabel', halfW - 100, halfH - 40, '金币: 0');
+        this.createLabel(this._hudNode, 'ScoreLabel', 0, halfH - 40, '分数: 0');
+        this.createLabel(this._hudNode, 'TimerLabel', 0, halfH - 78, '时间: 03:00');
+        this.createLabel(this._hudNode, 'DogMoodLabel', -halfW + 320, halfH - 40, '狗狗');
     }
 
     private createUIRect(parent: Node, name: string, x: number, y: number, w: number, h: number, color: Color): Node {
@@ -396,44 +415,142 @@ export class GameManager extends Component {
     }
 
     update(dt: number) {
-        if (this._gameState !== GameState.PLAYING) {
-            return;
-        }
-
         if (this._player && this._cameraNode) {
             const playerPos = this._player.getPosition();
             this._cameraNode.setPosition(playerPos.x, playerPos.y, this._cameraZ);
         }
 
-        this.updateGame(dt);
+        if (this._gameState === GameState.PLAYING) {
+            this.updateGame(dt);
+        }
     }
 
     private updateGame(dt: number) {
         this._gameTimer += dt;
         this._spawnTimer += dt;
+        this._difficultyCheckTimer += dt;
 
-        if (this._spawnTimer >= 1.0 && this._enemies.length < this._maxEnemies) {
-            this._spawnTimer = 0;
+        this.updateTimerUI();
+
+        const victoryTime = this.getVictoryTime();
+        if (this._gameTimer >= victoryTime) {
+            this.enterResult(GameState.VICTORY, '胜利！');
+            return;
+        }
+
+        if (this._difficultyCheckTimer >= this.getDifficultyCheckInterval()) {
+            this._difficultyCheckTimer = 0;
+            this.updateDynamicDifficulty();
+        }
+
+        const spawnInterval = this.getSpawnInterval();
+        while (this._spawnTimer >= spawnInterval && this._enemies.length < this._maxEnemies) {
+            this._spawnTimer -= spawnInterval;
             this.spawnEnemy();
         }
 
+        this.updateHUDStats();
+    }
+
+    private updateHUDStats() {
         const goldLabel = this._hudNode?.getChildByName('GoldLabel')?.getComponent(Label);
         if (goldLabel) {
-            goldLabel.string = `Gold: ${this._gold}`;
+            goldLabel.string = `金币: ${this._gold}`;
         }
 
         const scoreLabel = this._hudNode?.getChildByName('ScoreLabel')?.getComponent(Label);
         if (scoreLabel) {
-            scoreLabel.string = `Score: ${this._score}`;
+            scoreLabel.string = `分数: ${this._score}`;
         }
     }
 
-    public spawnEnemy() {
+    private updateTimerUI() {
+        const timerLabel = this._hudNode?.getChildByName('TimerLabel')?.getComponent(Label);
+        if (!timerLabel) {
+            return;
+        }
+
+        const remain = Math.max(0, this.getVictoryTime() - this._gameTimer);
+        const minutes = Math.floor(remain / 60);
+        const seconds = Math.floor(remain % 60);
+        const minuteText = minutes < 10 ? `0${minutes}` : `${minutes}`;
+        const secondText = seconds < 10 ? `0${seconds}` : `${seconds}`;
+        timerLabel.string = `时间: ${minuteText}:${secondText}`;
+
+        const warningTime = GAME_TIME_CONFIG?.warningTime ?? 30;
+        timerLabel.color = remain <= warningTime ? new Color(255, 92, 92, 255) : new Color(255, 255, 255, 255);
+    }
+
+    private getVictoryTime(): number {
+        return GAME_TIME_CONFIG?.victoryTime ?? 180;
+    }
+
+    private getDifficultyCheckInterval(): number {
+        return SPAWN_CONFIG?.dynamicDifficulty?.checkInterval ?? 10;
+    }
+
+    private updateDynamicDifficulty() {
+        const combo = this.getComboManager()?.getComboCount() ?? 0;
+        const hpPercent = this._playerStats.currentHp / Math.max(1, this._playerStats.maxHp);
+
+        let target = this._difficultyMultiplier;
+
+        if (combo >= 15 && hpPercent > 0.7) {
+            target += SPAWN_CONFIG?.dynamicDifficulty?.adjustmentRate ?? 0.08;
+        } else if (hpPercent < 0.25 || this._enemies.length > this._maxEnemies * 0.8) {
+            target -= SPAWN_CONFIG?.dynamicDifficulty?.adjustmentRate ?? 0.08;
+        }
+
+        this._difficultyMultiplier = Math.max(0.7, Math.min(1.8, target));
+    }
+
+    private getCurrentSpawnRates(): { lazyDogRate: number; crazyDogRate: number } {
+        const phases = Array.isArray(SPAWN_CONFIG?.phases) ? SPAWN_CONFIG.phases : [];
+        if (phases.length === 0) {
+            return { lazyDogRate: 1, crazyDogRate: 0 };
+        }
+
+        let selected = phases[0];
+        for (const phase of phases) {
+            if (this._gameTimer >= phase.time) {
+                selected = phase;
+            }
+        }
+
+        return {
+            lazyDogRate: selected.lazyDogRate ?? 1,
+            crazyDogRate: selected.crazyDogRate ?? 0
+        };
+    }
+
+    private getSpawnInterval(): number {
+        const rates = this.getCurrentSpawnRates();
+        const totalRate = Math.max(0.1, rates.lazyDogRate + rates.crazyDogRate);
+        const interval = 1 / (totalRate * this._difficultyMultiplier);
+        return Math.max(0.2, Math.min(1.5, interval));
+    }
+
+    private pickEnemyConfig(): any {
+        const rates = this.getCurrentSpawnRates();
+        const total = rates.lazyDogRate + rates.crazyDogRate;
+        if (total <= 0) {
+            return ENEMY_CONFIG.lazyDog;
+        }
+
+        const roll = Math.random() * total;
+        if (roll < rates.lazyDogRate) {
+            return ENEMY_CONFIG.lazyDog;
+        }
+        return ENEMY_CONFIG.crazyDog ?? ENEMY_CONFIG.lazyDog;
+    }
+
+    public spawnEnemy(config?: any) {
         if (!this._worldRoot) {
             return;
         }
 
-        const config = ENEMY_CONFIG.lazyDog;
+        const enemyConfig = config ?? this.pickEnemyConfig();
+
         const enemy = this.createPixelNode(
             this._worldRoot,
             'Enemy',
@@ -455,15 +572,26 @@ export class GameManager extends Component {
 
         const playerPos = this._player?.getPosition() || new Vec3();
         const angle = Math.random() * Math.PI * 2;
-        const spawnRadius = Math.max(220, Math.min(this.getHalfHeight() * 0.75, 420));
+        const spawnRadius = Math.max(220, Math.min(this.getHalfHeight() * 0.75, 460));
         enemy.setPosition(
             playerPos.x + Math.cos(angle) * spawnRadius,
             playerPos.y + Math.sin(angle) * spawnRadius,
             0
         );
 
-        enemy.addComponent(EnemyController).init(config);
+        const baseSize = 40;
+        const targetSize = enemyConfig?.size ?? 40;
+        const scale = targetSize / baseSize;
+        enemy.setScale(scale, scale, 1);
 
+        if (enemyConfig?.id === 'crazyDog') {
+            const sprite = enemy.getComponent(Sprite);
+            if (sprite) {
+                sprite.color = new Color(255, 132, 110, 255);
+            }
+        }
+
+        enemy.addComponent(EnemyController).init(enemyConfig);
         this._enemies.push(enemy);
     }
 
@@ -478,12 +606,8 @@ export class GameManager extends Component {
                 '11'
             ],
             isCrit
-                ? {
-                    '1': new Color(255, 230, 90, 255)
-                }
-                : {
-                    '1': new Color(220, 230, 255, 255)
-                },
+                ? { '1': new Color(255, 230, 90, 255) }
+                : { '1': new Color(220, 230, 255, 255) },
             4
         );
         bullet.setPosition(start);
@@ -494,6 +618,112 @@ export class GameManager extends Component {
 
     public startGame() {
         this._gameState = GameState.PLAYING;
+        this._gold = 0;
+        this._score = 0;
+        this._gameTimer = 0;
+        this._spawnTimer = 0;
+        this._difficultyCheckTimer = 0;
+        this._difficultyMultiplier = 1;
+        this._resultPanel?.destroy();
+        this._resultPanel = null;
+        this.unregisterRestartListener();
+
+        if (this._virtualJoystick) {
+            this._virtualJoystick.setEnabled(true);
+            this._virtualJoystick.node.active = true;
+        }
+    }
+
+    private enterResult(state: GameState, title: string) {
+        if (this._gameState === GameState.VICTORY || this._gameState === GameState.DEFEAT) {
+            return;
+        }
+
+        this._gameState = state;
+
+        if (this._virtualJoystick) {
+            this._virtualJoystick.setEnabled(false);
+            this._virtualJoystick.node.active = false;
+        }
+
+        this.showResultPanel(title);
+        this.registerRestartListener();
+    }
+
+    private showResultPanel(title: string) {
+        if (!this._uiCanvasNode) {
+            return;
+        }
+
+        if (this._resultPanel?.isValid) {
+            this._resultPanel.destroy();
+        }
+
+        const panel = new Node('ResultPanel');
+        panel.layer = Layers.Enum.UI_2D;
+        panel.setParent(this._uiCanvasNode);
+        panel.addComponent(UITransform).setContentSize(this._screenWidth, this._screenHeight);
+
+        const bg = panel.addComponent(Graphics);
+        bg.fillColor = new Color(0, 0, 0, 180);
+        bg.fillRect(-this._screenWidth * 0.5, -this._screenHeight * 0.5, this._screenWidth, this._screenHeight);
+
+        const titleNode = this.createLabel(panel, 'ResultTitle', 0, 80, title);
+        const titleLabel = titleNode.getComponent(Label);
+        if (titleLabel) {
+            titleLabel.fontSize = 52;
+            titleLabel.color = title === '胜利！' ? new Color(255, 228, 92, 255) : new Color(255, 120, 120, 255);
+        }
+
+        const infoNode = this.createLabel(
+            panel,
+            'ResultInfo',
+            0,
+            10,
+            `分数: ${this._score}  金币: ${this._gold}  存活: ${Math.floor(this._gameTimer)}秒`
+        );
+        const infoLabel = infoNode.getComponent(Label);
+        if (infoLabel) {
+            infoLabel.fontSize = 30;
+        }
+
+        const tipNode = this.createLabel(panel, 'ResultTip', 0, -70, '点击屏幕重新开始');
+        const tipLabel = tipNode.getComponent(Label);
+        if (tipLabel) {
+            tipLabel.fontSize = 26;
+            tipLabel.color = new Color(220, 220, 220, 255);
+        }
+
+        this._resultPanel = panel;
+    }
+
+    private registerRestartListener() {
+        if (this._restartListenerRegistered) {
+            return;
+        }
+        this._restartEnableTime = Date.now() + 300;
+        input.on(Input.EventType.TOUCH_START, this.onRestartTouch, this);
+        this._restartListenerRegistered = true;
+    }
+
+    private unregisterRestartListener() {
+        if (!this._restartListenerRegistered) {
+            return;
+        }
+        input.off(Input.EventType.TOUCH_START, this.onRestartTouch, this);
+        this._restartListenerRegistered = false;
+    }
+
+    private onRestartTouch(_event: EventTouch) {
+        if (Date.now() < this._restartEnableTime) {
+            return;
+        }
+
+        this.unregisterRestartListener();
+        const scene = director.getScene();
+        if (scene) {
+            director.loadScene(scene.name);
+        }
     }
 
     public killEnemy(enemy: Node, gold: number) {
@@ -518,14 +748,11 @@ export class GameManager extends Component {
         const hpBar = this._hudNode?.getChildByName('HPBar');
         if (hpBar) {
             const ratio = this._playerStats.currentHp / Math.max(1, this._playerStats.maxHp);
-            hpBar.setScale(ratio, 1, 1);
+            hpBar.setScale(Math.max(0, ratio), 1, 1);
         }
 
         if (this._playerStats.currentHp <= 0) {
-            const scene = director.getScene();
-            if (scene) {
-                director.loadScene(scene.name);
-            }
+            this.enterResult(GameState.DEFEAT, '失败');
         }
     }
 

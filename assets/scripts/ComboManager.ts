@@ -1,23 +1,27 @@
 /**
- * 连击管理器
- * 狗王枪神 - 连击Combo系统
- *
- * 功能：
- * - 记录连击数
- * - 计算连击倍数
- * - 管理连击超时
+ * 连击系统管理
+ * 负责连击计数、倍率计算以及连击UI表现。
  */
 
-import { _decorator, Component, Node, Label, Graphics, UITransform, Color, Vec3 } from 'cc';
+import {
+    _decorator,
+    Component,
+    Node,
+    Label,
+    UITransform,
+    Color,
+    Vec3,
+    Layers,
+    UIOpacity,
+    tween
+} from 'cc';
 import { COMBO_CONFIG } from './Constants';
 import { ComboData } from './types/GameTypes';
 
-const { ccclass, property } = _decorator;
+const { ccclass } = _decorator;
 
 @ccclass('ComboManager')
 export class ComboManager extends Component {
-
-    // ==================== 连击数据 ====================
     private _comboData: ComboData = {
         count: 0,
         multiplier: 1,
@@ -26,118 +30,87 @@ export class ComboManager extends Component {
         lastKillTime: 0
     };
 
-    // ==================== UI 节点 ====================
     private _comboLabel: Node | null = null;
     private _comboContainer: Node | null = null;
+    private _uiRoot: Node | null = null;
     private _floatingTexts: Node[] = [];
-
-    // ==================== 回调 ====================
     private _onComboChange: ((combo: ComboData) => void) | null = null;
 
-    // ==================== 生命周期 ====================
     onLoad() {
         this.resetCombo();
     }
 
+    onDestroy() {
+        this.clearFloatingTexts();
+    }
+
     update(deltaTime: number) {
-        if (!this._comboData.isActive) return;
+        if (!this._comboData.isActive) {
+            return;
+        }
 
-        // 更新连击倒计时
         this._comboData.timeLeft -= deltaTime;
-
-        // 更新UI显示
         this.updateComboUI();
 
-        // 连击超时
         if (this._comboData.timeLeft <= 0) {
             this.resetCombo();
         }
     }
 
-    // ==================== 公开接口 ====================
+    public setUIRoot(root: Node | null) {
+        this._uiRoot = root;
+        if (this._comboContainer && this._uiRoot) {
+            this._comboContainer.setParent(this._uiRoot);
+            this._comboContainer.layer = Layers.Enum.UI_2D;
+            this.refreshComboPosition();
+        }
+    }
 
-    /**
-     * 增加连击数
-     * @returns 是否有连击增长
-     */
     public addKill(): ComboData {
         const now = Date.now() / 1000;
 
-        // 如果连击有效，重置倒计时
         if (this._comboData.isActive) {
             this._comboData.timeLeft = COMBO_CONFIG.comboTime;
-            this._comboData.count++;
+            this._comboData.count += 1;
         } else {
-            // 开始新的连击
             this._comboData.isActive = true;
             this._comboData.timeLeft = COMBO_CONFIG.comboTime;
             this._comboData.count = 1;
         }
 
         this._comboData.lastKillTime = now;
-
-        // 计算连击倍数
         this._comboData.multiplier = this.calculateMultiplier(this._comboData.count);
 
-        // 显示连击UI
         this.showComboUI();
-
-        // 触发飘字特效
         this.showFloatingText(this._comboData.count, this._comboData.multiplier);
-
-        // 回调通知
-        if (this._onComboChange) {
-            this._onComboChange(this._comboData);
-        }
-
-        return this._comboData;
+        this.emitComboChange();
+        return this.getComboData();
     }
 
-    /**
-     * 获取当前连击数据
-     */
     public getComboData(): ComboData {
         return { ...this._comboData };
     }
 
-    /**
-     * 获取当前连击倍数
-     */
     public getMultiplier(): number {
         return this._comboData.multiplier;
     }
 
-    /**
-     * 获取当前连击数
-     */
     public getComboCount(): number {
         return this._comboData.count;
     }
 
-    /**
-     * 获取连击加成的暴击率
-     */
     public getComboCritBonus(): number {
         return this._comboData.multiplier * COMBO_CONFIG.critBonus;
     }
 
-    /**
-     * 获取连击加成的伤害
-     */
     public getComboDamageBonus(): number {
         return this._comboData.multiplier;
     }
 
-    /**
-     * 设置连击变化回调
-     */
     public setOnComboChange(callback: (combo: ComboData) => void) {
         this._onComboChange = callback;
     }
 
-    /**
-     * 重置连击
-     */
     public resetCombo() {
         this._comboData = {
             count: 0,
@@ -146,18 +119,17 @@ export class ComboManager extends Component {
             isActive: false,
             lastKillTime: 0
         };
-        this.hideComboUI();
 
+        this.hideComboUI();
+        this.emitComboChange();
+    }
+
+    private emitComboChange() {
         if (this._onComboChange) {
-            this._onComboChange(this._comboData);
+            this._onComboChange(this.getComboData());
         }
     }
 
-    // ==================== 私有方法 ====================
-
-    /**
-     * 计算连击倍数
-     */
     private calculateMultiplier(comboCount: number): number {
         const thresholds = COMBO_CONFIG.thresholds;
         const multipliers = COMBO_CONFIG.multipliers;
@@ -167,142 +139,147 @@ export class ComboManager extends Component {
                 return multipliers[i];
             }
         }
-
         return multipliers[0];
     }
 
-    /**
-     * 显示连击UI
-     */
     private showComboUI() {
         if (!this._comboContainer) {
             this.createComboUI();
         }
 
+        this.updateComboUI();
         if (this._comboContainer) {
             this._comboContainer.active = true;
         }
     }
 
-    /**
-     * 更新连击UI
-     */
-    private updateComboUI() {
-        if (!this._comboLabel) return;
-
-        const combo = this._comboData;
-        const label = this._comboLabel.getComponent(Label);
-        if (label) {
-            // 根据连击数显示不同颜色
-            let color = '#FFFFFF';
-            if (combo.multiplier >= 10) {
-                color = '#FFD700';  // 金色
-            } else if (combo.multiplier >= 5) {
-                color = '#FFA500';  // 橙色
-            } else if (combo.multiplier >= 3) {
-                color = '#FF6B6B';  // 红色
-            } else if (combo.multiplier >= 2) {
-                color = '#FF69B4';  // 粉色
-            }
-
-            label.string = `${combo.count} COMBO x${combo.multiplier} 🔥`;
-            label.color = new Color().fromHEX(color);
-        }
-    }
-
-    /**
-     * 隐藏连击UI
-     */
     private hideComboUI() {
         if (this._comboContainer) {
             this._comboContainer.active = false;
         }
     }
 
-    /**
-     * 创建连击UI
-     */
     private createComboUI() {
-        const halfW = 400; // 假设屏幕宽度
-        const halfH = 300; // 假设屏幕高度
+        const parent = this._uiRoot ?? this.node;
 
-        // 创建连击显示容器
         this._comboContainer = new Node('ComboContainer');
-        this._comboContainer.setParent(this.node);
-        this._comboContainer.setPosition(new Vec3(0, halfH - 80, 0));
+        this._comboContainer.layer = this._uiRoot ? Layers.Enum.UI_2D : parent.layer;
+        this._comboContainer.setParent(parent);
+        this._comboContainer.addComponent(UITransform).setContentSize(360, 56);
+        this.refreshComboPosition();
 
-        const transform = this._comboContainer.addComponent(UITransform);
-        transform.setContentSize(300, 50);
-
-        // 创建连击标签
         this._comboLabel = new Node('ComboLabel');
+        this._comboLabel.layer = this._comboContainer.layer;
         this._comboLabel.setParent(this._comboContainer);
-        this._comboLabel.setPosition(new Vec3(0, 0, 0));
-
-        const labelTransform = this._comboLabel.addComponent(UITransform);
-        labelTransform.setContentSize(300, 50);
+        this._comboLabel.addComponent(UITransform).setContentSize(360, 56);
 
         const label = this._comboLabel.addComponent(Label);
-        label.string = '1 COMBO x1 🔥';
-        label.fontSize = 28;
+        label.string = '连击 0 x1';
+        label.fontSize = 30;
         label.color = new Color(255, 255, 255, 255);
+        label.isBold = true;
+
+        this._comboContainer.active = false;
     }
 
-    /**
-     * 显示飘字特效
-     */
+    private refreshComboPosition() {
+        if (!this._comboContainer) {
+            return;
+        }
+
+        const parent = this._comboContainer.parent;
+        if (!parent) {
+            return;
+        }
+
+        const parentTransform = parent.getComponent(UITransform);
+        const halfH = parentTransform ? parentTransform.contentSize.height * 0.5 : 300;
+        this._comboContainer.setPosition(new Vec3(0, halfH - 120, 0));
+    }
+
+    private updateComboUI() {
+        if (!this._comboLabel) {
+            return;
+        }
+
+        const label = this._comboLabel.getComponent(Label);
+        if (!label) {
+            return;
+        }
+
+        const combo = this._comboData;
+        const color = this.getColorByMultiplier(combo.multiplier);
+        label.string = `连击 ${combo.count} x${combo.multiplier}`;
+        label.color = color;
+    }
+
+    private getColorByMultiplier(multiplier: number): Color {
+        if (multiplier >= 10) {
+            return new Color(255, 215, 64, 255);
+        }
+        if (multiplier >= 5) {
+            return new Color(255, 162, 65, 255);
+        }
+        if (multiplier >= 3) {
+            return new Color(255, 110, 110, 255);
+        }
+        if (multiplier >= 2) {
+            return new Color(255, 128, 196, 255);
+        }
+        return new Color(255, 255, 255, 255);
+    }
+
     private showFloatingText(comboCount: number, multiplier: number) {
-        // 创建一个简单的飘字节点
-        const floatingText = new Node('FloatingText');
-        floatingText.setParent(this.node);
+        const parent = this._uiRoot ?? this.node;
+        const floatingText = new Node('ComboFloatingText');
+        floatingText.layer = this._uiRoot ? Layers.Enum.UI_2D : parent.layer;
+        floatingText.setParent(parent);
 
-        const halfW = 400;
-        const halfH = 300;
-
-        // 随机位置
-        const x = (Math.random() - 0.5) * 200;
-        const y = halfH - 120 + (Math.random() - 0.5) * 50;
+        const parentTransform = parent.getComponent(UITransform);
+        const halfH = parentTransform ? parentTransform.contentSize.height * 0.5 : 300;
+        const x = (Math.random() - 0.5) * 180;
+        const y = halfH - 170 + (Math.random() - 0.5) * 30;
         floatingText.setPosition(new Vec3(x, y, 0));
-
-        const transform = floatingText.addComponent(UITransform);
-        transform.setContentSize(150, 40);
+        floatingText.addComponent(UITransform).setContentSize(260, 40);
 
         const label = floatingText.addComponent(Label);
-        label.string = `+${comboCount}`;
+        label.string = `连杀 +${comboCount}  x${multiplier}`;
         label.fontSize = 24;
-        label.color = new Color().fromHEX('#FFD700');
+        label.color = new Color(255, 215, 80, 255);
+        label.isBold = true;
 
-        // 简单的淡出动画
-        let lifeTime = 0.5;
-        let opacity = 1.0;
+        const opacity = floatingText.addComponent(UIOpacity);
+        opacity.opacity = 255;
+        this._floatingTexts.push(floatingText);
 
-        const updateFloating = (delta: number) => {
-            lifeTime -= delta;
-            if (lifeTime <= 0) {
-                floatingText.destroy();
-                this.node.off('update', updateFloating);
-                return;
-            }
+        tween(floatingText)
+            .to(0.45, { position: new Vec3(x, y + 56, 0) })
+            .call(() => this.removeFloatingText(floatingText))
+            .start();
 
-            // 向上移动
-            const pos = floatingText.getPosition();
-            floatingText.setPosition(pos.x, pos.y + 50 * delta, 0);
-
-            // 淡出
-            opacity -= delta * 2;
-            if (opacity < 0) opacity = 0;
-            label.color = new Color(255, 215, 0, Math.floor(opacity * 255));
-        };
-
-        this.node.on('update', updateFloating);
+        tween(opacity)
+            .to(0.45, { opacity: 0 })
+            .start();
     }
 
-    // ==================== 静态方法 ====================
+    private removeFloatingText(node: Node) {
+        this._floatingTexts = this._floatingTexts.filter((n) => n !== node && n.isValid);
+        if (node.isValid) {
+            node.destroy();
+        }
+    }
 
-    /**
-     * 创建ComboManager组件
-     */
+    private clearFloatingTexts() {
+        for (const node of this._floatingTexts) {
+            if (node && node.isValid) {
+                node.destroy();
+            }
+        }
+        this._floatingTexts = [];
+    }
+
     static create(node: Node): ComboManager {
         return node.addComponent(ComboManager);
     }
 }
+
