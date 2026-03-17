@@ -30,7 +30,15 @@ jobs:
             exit 1
           fi
 
+      - name: Setup Pages (Auto-enable with PAT)
+        if: ${{ secrets.PAGES_PAT != '' }}
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+          token: ${{ secrets.PAGES_PAT }}
+
       - name: Setup Pages
+        if: ${{ secrets.PAGES_PAT == '' }}
         uses: actions/configure-pages@v5
 
       - name: Upload artifact
@@ -48,4 +56,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
