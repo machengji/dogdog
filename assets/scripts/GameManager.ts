@@ -381,7 +381,7 @@ export class GameManager extends Component {
         this._camera.near = 0.1;
         this._camera.far = 3000;
         this._camera.visibility = Layers.BitMask.DEFAULT;
-        this._camera.clearColor = new Color(20, 20, 24, 255);
+        this._camera.clearColor = new Color(0, 0, 0, 255);
 
         const uiCamNode = new Node('UICamera');
         uiCamNode.layer = Layers.Enum.UI_2D;
@@ -491,25 +491,8 @@ export class GameManager extends Component {
         const size = 6000;
         bg.addComponent(UITransform).setContentSize(size, size);
         const g = bg.addComponent(Graphics);
-        g.fillColor = new Color(20, 22, 30, 255);
+        g.fillColor = new Color(0, 0, 0, 255);
         g.fillRect(-size * 0.5, -size * 0.5, size, size);
-
-        const tileSize = 80;
-        for (let x = -size * 0.5; x < size * 0.5; x += tileSize) {
-            for (let y = -size * 0.5; y < size * 0.5; y += tileSize) {
-                const tx = Math.floor((x + size * 0.5) / tileSize);
-                const ty = Math.floor((y + size * 0.5) / tileSize);
-                const odd = (tx + ty) % 2 === 0;
-
-                g.fillColor = odd ? new Color(36, 40, 56, 255) : new Color(30, 34, 48, 255);
-                g.fillRect(x, y, tileSize, tileSize);
-
-                if ((tx * 7 + ty * 11) % 17 === 0) {
-                    g.fillColor = new Color(48, 54, 76, 255);
-                    g.fillRect(x + 8, y + 8, 8, 8);
-                }
-            }
-        }
     }
 
     private createPlayer() {

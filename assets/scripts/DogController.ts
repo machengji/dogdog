@@ -1,4 +1,4 @@
-import { _decorator, Component, Node, Vec3, Label } from 'cc';
+import { _decorator, Component, Node, Vec3, Label, Color, Graphics, UITransform, tween } from 'cc';
 import { GameManager } from './GameManager';
 import { DOG_CONFIG, DOG_MOOD_CONFIG } from './Constants';
 import { GameState, DogMood } from './types/GameTypes';
@@ -24,10 +24,14 @@ export class DogController extends Component {
     private attackSpeedBonus = 1.0;
     private damageBonus = 1.0;
     private followCloser = false;
+    private followTargetSmoothed = new Vec3();
+    private hasFollowTarget = false;
 
     onLoad() {
         this.config = DOG_CONFIG.husky;
         this.affection = 50;
+        this.followTargetSmoothed = this.node.getPosition().clone();
+        this.hasFollowTarget = true;
     }
 
     update(deltaTime: number) {
@@ -132,34 +136,46 @@ export class DogController extends Component {
         const enemies = GameManager.instance.getEnemies();
         const dogPos = this.node.getPosition();
 
-        let nearestEnemy: Node | null = null;
-        let nearestDist = 320;
+        const maxAcquireDistance = 320;
+        let candidateEnemy: Node | null = this.targetEnemy && this.targetEnemy.isValid ? this.targetEnemy : null;
+        let candidateDist = candidateEnemy ? Vec3.distance(dogPos, candidateEnemy.getPosition()) : Number.POSITIVE_INFINITY;
 
         for (const enemy of enemies) {
             const dist = Vec3.distance(dogPos, enemy.getPosition());
-            if (dist < nearestDist) {
-                nearestDist = dist;
-                nearestEnemy = enemy;
+            if (dist > maxAcquireDistance) {
+                continue;
+            }
+
+            const shouldSwitch =
+                !candidateEnemy ||
+                candidateDist > maxAcquireDistance ||
+                dist < candidateDist - 28;
+
+            if (shouldSwitch) {
+                candidateEnemy = enemy;
+                candidateDist = dist;
             }
         }
 
-        this.targetEnemy = nearestEnemy;
-        if (!nearestEnemy) {
+        if (!candidateEnemy || candidateDist > maxAcquireDistance) {
+            this.targetEnemy = null;
             return;
         }
+        this.targetEnemy = candidateEnemy;
 
         const stats = GameManager.instance.getPlayerStats();
         const dogDamage = stats.attack * 0.3 * this.damageBonus;
         const attackInterval = 1 / Math.max(0.6, this.attackSpeedBonus);
         const attackRange = 95;
 
-        if (nearestDist > attackRange || this.attackTimer < attackInterval) {
+        if (candidateDist > attackRange || this.attackTimer < attackInterval) {
             return;
         }
 
         this.attackTimer = 0;
-        const enemyCtrl = nearestEnemy.getComponent(EnemyController);
+        const enemyCtrl = candidateEnemy.getComponent(EnemyController);
         enemyCtrl?.takeDamage(dogDamage);
+        this.playAttackEffect(candidateEnemy);
     }
 
     private useSkill() {
@@ -183,8 +199,6 @@ export class DogController extends Component {
         }
 
         const playerPos = player.getPosition();
-        const dogPos = this.node.getPosition();
-
         const offsetDistance = this.followCloser ? 30 : 58;
         let targetPos = playerPos.clone().add(new Vec3(offsetDistance, 0, 0));
         let moveSpeed = 165;
@@ -198,14 +212,92 @@ export class DogController extends Component {
             }
         }
 
-        const dist = Vec3.distance(dogPos, targetPos);
-        if (dist <= 8) {
+        this.moveTowardTarget(targetPos, moveSpeed, deltaTime);
+    }
+
+    private moveTowardTarget(targetPos: Vec3, moveSpeed: number, deltaTime: number) {
+        if (!this.hasFollowTarget) {
+            this.followTargetSmoothed.set(targetPos.x, targetPos.y, 0);
+            this.hasFollowTarget = true;
+        } else {
+            const followLerp = Math.min(1, deltaTime * 8);
+            this.followTargetSmoothed.set(
+                this.followTargetSmoothed.x + (targetPos.x - this.followTargetSmoothed.x) * followLerp,
+                this.followTargetSmoothed.y + (targetPos.y - this.followTargetSmoothed.y) * followLerp,
+                0
+            );
+        }
+
+        const dogPos = this.node.getPosition();
+        const toTarget = this.followTargetSmoothed.clone().subtract(dogPos);
+        const dist = toTarget.length();
+
+        if (dist <= 2) {
+            this.node.setPosition(this.followTargetSmoothed);
             return;
         }
 
-        const direction = targetPos.clone().subtract(dogPos).normalize();
-        const step = direction.multiplyScalar(moveSpeed * deltaTime);
+        const maxStep = moveSpeed * deltaTime;
+        if (maxStep >= dist) {
+            this.node.setPosition(this.followTargetSmoothed);
+            return;
+        }
+
+        const direction = toTarget.multiplyScalar(1 / dist);
+        const step = direction.multiplyScalar(maxStep);
         this.node.setPosition(dogPos.add(step));
+    }
+
+    private playAttackEffect(enemy: Node) {
+        const parent = this.node.parent;
+        if (!parent || !enemy.isValid) {
+            return;
+        }
+
+        const enemyPos = enemy.getPosition();
+        const fx = new Node('DogAttackFx');
+        fx.layer = this.node.layer;
+        fx.setParent(parent);
+        fx.setPosition(enemyPos);
+        fx.addComponent(UITransform).setContentSize(36, 36);
+
+        const g = fx.addComponent(Graphics);
+        g.fillColor = new Color(255, 190, 88, 220);
+        g.fillRect(-2, -14, 4, 28);
+        g.fillRect(-14, -2, 28, 4);
+        g.fillColor = new Color(255, 240, 170, 255);
+        g.fillRect(-2, -2, 4, 4);
+        g.fillRect(-10, -10, 4, 4);
+        g.fillRect(6, -10, 4, 4);
+        g.fillRect(-10, 6, 4, 4);
+        g.fillRect(6, 6, 4, 4);
+
+        fx.setScale(0.6, 0.6, 1);
+        tween(fx)
+            .to(0.06, { scale: new Vec3(1.15, 1.15, 1) })
+            .to(0.08, { scale: new Vec3(0.08, 0.08, 1) })
+            .call(() => {
+                if (fx.isValid) {
+                    fx.destroy();
+                }
+            })
+            .start();
+
+        this.playPunchScale(this.node, 1.12);
+        this.playPunchScale(enemy, 1.1);
+    }
+
+    private playPunchScale(target: Node, ratio: number) {
+        if (!target?.isValid) {
+            return;
+        }
+
+        const baseScale = target.getScale().clone();
+        const punchScale = new Vec3(baseScale.x * ratio, baseScale.y * ratio, baseScale.z);
+        tween(target)
+            .to(0.04, { scale: punchScale })
+            .to(0.1, { scale: baseScale })
+            .start();
     }
 
     public addAffection(amount: number) {
